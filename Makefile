@@ -1,24 +1,40 @@
+DEBUG ?= true
+
 CC = gcc
-CFLAGS = -Wall -g
+CFLAGS = -std=c11
+ifeq ($(DEBUG), true)
+	CFLAGS += -Wall -Wextra -Wfatal-errors -g -Og
+else
+	CFLAGS += -O3
+endif
+CFLAGS += -c
 
-WORKLOADS = count
-LOGS = ckp/*.log
+INCLUDEDIR = include
+BUILDDIR = build
+SRCDIR = src
 
-all: checkpoint $(WORKLOADS)
+WORKLOADS = $(BUILDDIR)/count
 
-count: count.o
-	$(CC) $(CFLAGS) -o count count.o
+all: $(BUILDDIR)/checkpoint $(WORKLOADS)
 
-count.o: count.c
-	$(CC) $(CFLAGS) -c count.c
+$(BUILDDIR)/count: $(BUILDDIR)/count.o
+	$(CC) $^ -o $@
 
-checkpoint: checkpoint.o
-	$(CC) $(CFLAGS) -o checkpoint checkpoint.o
+$(BUILDDIR)/count.o: $(SRCDIR)/count.c
+	$(CC) $(CFLAGS) $^ -o $@
 
-checkpoint.o: checkpoint.c
-	$(CC) $(CFLAGS) -c checkpoint.c
+$(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
+	$(CC) $^ -o $@
+
+$(BUILDDIR)/checkpoint.o: $(SRCDIR)/checkpoint.c
+	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
+
+$(BUILDDIR)/ptrace.o: $(SRCDIR)/ptrace.c
+	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
 
 clean:
-	rm -f count count.o checkpoint checkpoint.o $(LOGS)
+	rm -rf $(BUILDDIR)
+	mkdir $(BUILDDIR)
+	rm -f *.bin
 
 .PHONY: all clean
