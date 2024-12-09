@@ -15,7 +15,7 @@ SRCDIR = src
 
 WORKLOADS = $(BUILDDIR)/count
 
-all: $(BUILDDIR)/checkpoint $(WORKLOADS)
+all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(WORKLOADS)
 
 $(BUILDDIR)/count: $(BUILDDIR)/count.o
 	$(CC) $^ -o $@
@@ -30,6 +30,12 @@ $(BUILDDIR)/checkpoint.o: $(SRCDIR)/checkpoint.c
 	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/ptrace.o: $(SRCDIR)/ptrace.c
+	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
+
+$(BUILDDIR)/restore: $(BUILDDIR)/restore.o $(BUILDDIR)/ptrace.o
+	$(CC) $^ -o $@
+
+$(BUILDDIR)/restore.o: $(SRCDIR)/restore.c
 	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
 
 clean:
