@@ -1,7 +1,6 @@
 #include "ptrace.h"
 #include <assert.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,12 +10,16 @@
 
 #include "checkpoint.h"
 
-static int write_map_to_restorer(int restorer_fd, pid_t pid) {
-  // read the memory map of the process
+static int construct_dump_struct(process_dump_t *dump) {
+  char line[256];
+  const int max_regions = 30;
+
+  dump->num_regions = 0;
+  dump->regions = malloc(sizeof(memory_region_t) * max_regions);
+
+  // read /proc/pid/maps file to construct dump.regions
+  pid_t pid = getpid();
   char maps_path[256];
-  unsigned long offset;
-  char dev[12];
-  unsigned long inode;
   snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", pid);
   FILE *maps_file = fopen(maps_path, "r");
   if (maps_file == NULL) {
@@ -24,36 +27,34 @@ static int write_map_to_restorer(int restorer_fd, pid_t pid) {
     return -1;
   }
 
-  // write the memory map to the restorer
-  while (!feof(maps_file)) {
+  while (fgets(line, sizeof(line), maps_file)) {
     memory_region_t region;
-    memset(&region, 0, sizeof(region));
-    char line[256];
-    if (fgets(line, sizeof(line), maps_file) == NULL) {
-      break;
-    }
+    unsigned long offset;
+    char dev[12];
+    unsigned long inode;
+
     int items_parsed = sscanf(line, "%lx-%lx %4s %lx %11s %lu %255[^\n]",
                               &region.start, &region.end, region.permissions,
                               &offset, dev, &inode, region.path);
     if (items_parsed < 6) {
-      printf("Failed to parse line: %s\n", line);
+      fprintf(stderr, "Failed to parse line: %s\n", line);
       continue;
     }
     if (items_parsed < 7) {
       strcpy(region.path, "");
     }
-    printf("start: %lx, end: %lx, size: %lu, path: %s\n", region.start,
-           region.end, region.end - region.start, region.path);
 
     region.size = region.end - region.start;
     region.content = malloc(region.size);
+    // region.content == NULL;
 
-    int wn = write(restorer_fd, &region, sizeof(region));
-    free(region.content);
-    if (wn != sizeof(region)) {
-      perror("write");
-      fclose(maps_file);
-      return -1;
+    printf("start: %lx, end: %lx, permissions: %s, path: %s, size: %zu\n",
+           region.start, region.end, region.permissions, region.path,
+           region.size);
+    dump->regions[dump->num_regions++] = region;
+
+    if (dump->num_regions >= max_regions) {
+      break;
     }
   }
   fclose(maps_file);
@@ -67,31 +68,18 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  pid_t pid = fork();
-  if (pid < 0) {
-    perror("fork");
+  process_dump_t dump;
+  if (construct_dump_struct(&dump) < 0) {
     return EXIT_FAILURE;
-  } else if (pid == 0) {
-    // Child
-    while (1) {
-      pause();
-    }
-  } else {
-    // Parent: using ptrace to stop the child, and inspect its memory
-    assert(attach_process(pid) == 0);
+  }
 
-    assert(write(restorer_fd, &pid, sizeof(pid)) == sizeof(pid));
-
-    if (write_map_to_restorer(restorer_fd, pid) < 0) {
-      printf("Failed to write memory map to restorer\n");
-      close(restorer_fd);
-      return EXIT_FAILURE;
-    }
-
-    assert(detach_process(pid) == 0);
-    kill(pid, SIGKILL);
+  // write dump to /dev/restore_memory
+  if (write(restorer_fd, &dump, sizeof(dump)) < 0) {
+    perror("write");
+    return EXIT_FAILURE;
   }
 
   close(restorer_fd);
+
   return EXIT_SUCCESS;
 }
