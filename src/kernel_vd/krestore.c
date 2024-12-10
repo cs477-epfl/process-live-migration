@@ -65,10 +65,10 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret != 0) {
       goto free_return;
     }
-    // ret = map_all(dump.regions, dump.num_regions);
-    // if (ret != 0) {
-    //   goto free_return;
-    // }
+    ret = map_all(dump.regions, dump.num_regions);
+    if (ret != 0) {
+      goto free_return;
+    }
 
   free_return:
     free_process_dump(&dump);
@@ -113,58 +113,58 @@ static int unmap_all(void) {
   return ret;
 }
 
-// static unsigned long parse_permissions(const char *permissions) {
-//   unsigned long ret = 0;
-//   if (permissions[0] == 'r') {
-//     ret |= PROT_READ;
-//   }
-//   if (permissions[1] == 'w') {
-//     ret |= PROT_WRITE;
-//   }
-//   if (permissions[2] == 'x') {
-//     ret |= PROT_EXEC;
-//   }
-//   return ret;
-// }
+static unsigned long parse_permissions(const char *permissions) {
+  unsigned long ret = 0;
+  if (permissions[0] == 'r') {
+    ret |= PROT_READ;
+  }
+  if (permissions[1] == 'w') {
+    ret |= PROT_WRITE;
+  }
+  if (permissions[2] == 'x') {
+    ret |= PROT_EXEC;
+  }
+  return ret;
+}
 
-// static int map_all(const memory_region_t *regions, size_t num) {
-//   size_t ptr = 0; // pointer to the current region
-//   int ret = 0;
-//   for (; ptr < num; ptr++) {
-//     memory_region_t *region = &regions[ptr];
-//     unsigned long start = region->start;
-//     unsigned long size = region->size;
-//     unsigned long permissions = parse_permissions(region->permissions);
-//     const char *path = region->path;
-//     // skip kernel-related regions
-//     if (strcmp(path, "[vdso]") == 0 || strcmp(path, "[vsyscall]") == 0 ||
-//         strcmp(path, "[vvar]") == 0) {
-//       continue;
-//     }
+static int map_all(const memory_region_t *regions, size_t num) {
+  size_t ptr = 0; // pointer to the current region
+  int ret = 0;
+  for (; ptr < num; ptr++) {
+    memory_region_t *region = &regions[ptr];
+    unsigned long start = region->start;
+    unsigned long size = region->size;
+    unsigned long permissions = parse_permissions(region->permissions);
+    const char *path = region->path;
+    // skip kernel-related regions
+    if (strcmp(path, "[vdso]") == 0 || strcmp(path, "[vsyscall]") == 0 ||
+        strcmp(path, "[vvar]") == 0) {
+      continue;
+    }
 
-//     const char *content = region->content;
-//     unsigned long flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
-//     if (strcmp(path, "[stack]") == 0) {
-//       flags |= MAP_GROWSDOWN;
-//     }
+    const char *content = region->content;
+    unsigned long flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+    if (strcmp(path, "[stack]") == 0) {
+      flags |= MAP_GROWSDOWN;
+    }
 
-//     ret = vm_mmap(NULL, start, size, permissions, flags, 0);
-//     if (ret != 0) {
-//       printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
-//              start, start + size, path);
-//       break;
-//     }
+    ret = vm_mmap(NULL, start, size, permissions, flags, 0);
+    if (IS_ERR_VALUE(ret)) {
+      printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
+             start, start + size, path);
+      break;
+    }
 
-//     // if (content != NULL) {
-//     //   ret = copy_to_user((void *)start, content, size);
-//     //   if (ret != 0) {
-//     //     break;
-//     //   }
-//     // }
-//   }
+    // if (content != NULL) {
+    //   ret = copy_to_user((void *)start, content, size);
+    //   if (ret != 0) {
+    //     break;
+    //   }
+    // }
+  }
 
-//   return ret;
-// }
+  return ret;
+}
 
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len) {
