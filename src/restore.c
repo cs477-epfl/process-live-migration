@@ -62,7 +62,7 @@ static int construct_dump_struct(process_dump_t *dump) {
 }
 
 int main(int argc, char **argv) {
-  int restorer_fd = open("/dev/restore_memory", O_RDWR);
+  int restorer_fd = open("/dev/restore_process", O_RDWR);
   if (restorer_fd < 0) {
     perror("open");
     return EXIT_FAILURE;

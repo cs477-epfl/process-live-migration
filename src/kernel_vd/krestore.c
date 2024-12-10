@@ -1,44 +1,11 @@
-#include <linux/device.h>
-#include <linux/errno.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/mm.h>
-#include <linux/module.h>
-#include <linux/printk.h>
-#include <linux/sched/mm.h>
-#include <linux/slab.h>
-#include <linux/types.h>
+#include "krestore.h"
 
-#define DEVICE_NAME "restore_memory"
+#define DEVICE_NAME "restore_process"
 #define CLASS_NAME "virtual"
 
 static int major_number;
 static struct class *device_class = NULL;
 static struct device *device_device = NULL;
-
-typedef struct {
-  unsigned long start;
-  unsigned long end;
-  char permissions[5]; // e.g., "rwxp"
-  char path[256];      // Path or descriptor (e.g., "[heap]")
-  size_t size;
-  char *content;
-} memory_region_t;
-
-typedef struct {
-  struct user_regs_struct regs;
-  size_t num_regions;
-  memory_region_t *regions;
-} process_dump_t;
-
-// File operation functions
-static int device_open(struct inode *, struct file *);
-static int device_release(struct inode *, struct file *);
-static ssize_t device_read(struct file *, char *, size_t, loff_t *);
-static ssize_t device_write(struct file *, const char *, size_t, loff_t *);
-static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
-                                size_t len);
-static void print_memory_regions(const memory_region_t *regions, size_t num);
 
 static struct file_operations fops = {
     .open = device_open,
@@ -91,6 +58,10 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret_parse != 0) {
       return ret_parse;
     }
+    int ret_unmap = unmap_all();
+    if (ret_unmap != 0) {
+      return ret_unmap;
+    }
     print_memory_regions(dump.regions, dump.num_regions);
     return 0;
 
@@ -107,6 +78,30 @@ static void print_memory_regions(const memory_region_t *regions, size_t num) {
            regions[i].start, regions[i].end, regions[i].permissions,
            regions[i].path, regions[i].size);
   }
+}
+
+static int unmap_all(void) {
+  struct mm_struct *mm = current->mm;
+  struct vm_area_struct *vma = mm->mmap;
+  int ret = 0;
+
+  // mmap_write_lock(mm);
+  while (vma) {
+    struct vm_area_struct *next_vma = vma->vm_next;
+    if (vma->vm_start == mm->context.vdso || (vma->vm_flags & VM_SPECIAL)) {
+      vma = next_vma;
+      continue;
+    }
+
+    ret = vm_munmap(vma->vm_start, vma->vm_end - vma->vm_start);
+    if (ret != 0) {
+      break;
+    }
+    vma = next_vma;
+  }
+  // mmap_write_unlock(mm);
+
+  return ret;
 }
 
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,

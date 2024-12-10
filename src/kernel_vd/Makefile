@@ -1,4 +1,4 @@
-obj-m += restore_memory.o
+obj-m += krestore.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
