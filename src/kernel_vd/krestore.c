@@ -1,5 +1,6 @@
 #include "krestore.h"
 
+#define x86
 #define DEVICE_NAME "restore_process"
 #define CLASS_NAME "virtual"
 
@@ -65,10 +66,12 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret != 0) {
       goto free_return;
     }
+    flush_tlb_cache();
     // ret = map_all(dump.regions, dump.num_regions);
     // if (ret != 0) {
     //   goto free_return;
     // }
+    flush_tlb_cache();
 
   free_return:
     free_process_dump(&dump);
@@ -111,6 +114,22 @@ static int unmap_all(void) {
   // mmap_write_unlock(mm);
 
   return ret;
+}
+
+// Flush TLB entries and cache lines for current process
+static void flush_tlb_cache(void) {
+  struct mm_struct *mm = current->mm;
+  if (mm) {
+    flush_tlb_mm(mm);
+  }
+  mb(); // Full Linux memory barrier
+#ifdef x86
+  wbinvd(); // Write back and invalidate all cache lines
+  asm volatile("mfence" ::: "memory"); // x86 memory barrier
+#else
+  #error "Unsupported architecture"
+#endif
+  printk(KERN_DEBUG "/dev/krestore: Flushed TLB and cache lines\n");
 }
 
 // static unsigned long parse_permissions(const char *permissions) {
