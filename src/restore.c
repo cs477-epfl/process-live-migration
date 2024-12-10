@@ -7,8 +7,10 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-
 #include "checkpoint.h"
+#include "parse_checkpoint.h"
+
+
 
 static int construct_dump_struct(process_dump_t *dump) {
   char line[256];
@@ -62,16 +64,26 @@ static int construct_dump_struct(process_dump_t *dump) {
 }
 
 int main(int argc, char **argv) {
+  if (argc != 2) {
+    fprintf(stderr, "Usage: %s <dump_file>\n", argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  process_dump_t dump;
+
+  const char *dump_file = argv[1];
+  memset(&dump, 0, sizeof(dump));
+
+  if (load_process_dump(dump_file, &dump) == -1) {
+    return EXIT_FAILURE;
+  }
+
   int restorer_fd = open("/dev/restore_memory", O_RDWR);
   if (restorer_fd < 0) {
     perror("open");
     return EXIT_FAILURE;
   }
 
-  process_dump_t dump;
-  if (construct_dump_struct(&dump) < 0) {
-    return EXIT_FAILURE;
-  }
 
   // write dump to /dev/restore_memory
   if (write(restorer_fd, &dump, sizeof(dump)) < 0) {
@@ -80,6 +92,7 @@ int main(int argc, char **argv) {
   }
 
   close(restorer_fd);
+  printf("dump written to /dev/restore_memory\n");
 
   return EXIT_SUCCESS;
 }

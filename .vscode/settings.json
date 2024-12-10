@@ -4,5 +4,8 @@
     ],
     "clangd.fallbackFlags": [
         "-I${workspaceFolder}/include",
-    ]
+    ],
+    "files.associations": {
+        "parse_checkpoint.h": "c"
+    }
 }
