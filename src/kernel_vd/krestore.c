@@ -65,8 +65,8 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret != 0) {
       goto free_return;
     }
-    flush_tlb_cache();
-    
+    flush_tlb_cache(); // TODO: maybe unnecessary
+
     ret = map_all(dump.regions, dump.num_regions);
     if (ret != 0) {
       goto free_return;
@@ -74,8 +74,6 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     flush_tlb_cache();
 
     // TODO: restore registers and mm_info
-
-    // TODO: flush TLB, icache, and dcache
 
   free_return:
     free_process_dump(&dump);
@@ -121,7 +119,7 @@ static void flush_tlb_cache(void) {
   wbinvd(); // Write back and invalidate all cache lines
   asm volatile("mfence" ::: "memory"); // x86 memory barrier
 #else
-  #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
   printk(KERN_DEBUG "/dev/krestore: Flushed TLB and cache lines\n");
 }

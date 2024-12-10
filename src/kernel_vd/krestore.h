@@ -50,6 +50,7 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len);
 static void free_process_dump(process_dump_t *dump);
 static void print_memory_regions(const memory_region_t *regions, size_t num);
+static void flush_tlb_cache(void);
 
 // Unmmap all regions in the current user program except the kernel-related
 // ones.
