@@ -1,4 +1,4 @@
-#include "../include/parse_checkpoint.h"
+#include "parse_checkpoint.h"
 
 void free_process_dump(process_dump_t *dump) {
   for (size_t i = 0; i < dump->num_regions; i++) {
