@@ -1,3 +1,6 @@
+#ifndef CHECKPOINT_H
+#define CHECKPOINT_H
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -23,9 +26,21 @@ typedef struct {
   char *content;
 } memory_region_t;
 
+// a struct to hold the essential fields in mm_struct
+typedef struct {
+  unsigned long start_code;
+  unsigned long end_code;
+  unsigned long start_data;
+  unsigned long end_data;
+  unsigned long start_brk;
+  unsigned long brk;
+  unsigned long start_stack;
+} mm_info_t;
+
 // Define a structure to hold the entire process state
 typedef struct {
   struct user_regs_struct regs;
+  mm_info_t mm_info;
   size_t num_regions;
   memory_region_t *regions;
 } process_dump_t;
@@ -41,6 +56,9 @@ int get_memory_area(memory_region_t *region, const char *mem_path);
 // Function to read memory regions from /proc/<pid>/maps and /proc/<pid>/mem
 int read_memory_regions(pid_t pid, process_dump_t *dump);
 
+// Function to read essential fields from mm_struct
+int read_mm_info(pid_t pid, mm_info_t *mm_info);
+
 // Function to read the register values of a process
 int read_registers(pid_t pid, struct user_regs_struct *regs);
 
@@ -49,3 +67,5 @@ int save_process_dump(const char *filename, process_dump_t *dump);
 
 // Function to free the memory allocated in the dump
 void free_process_dump(process_dump_t *dump);
+
+#endif

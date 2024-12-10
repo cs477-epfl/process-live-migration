@@ -19,26 +19,26 @@ enum dev_state {
   REMAPPING, // waiting for following writes to get memory mapping and contents
 };
 
-static struct restore_memory_args_t {
+static struct krestore_args_t {
   enum dev_state state;
   pid_t pid; // which process we are restoring memory on
-} restore_memory_config;
+} krestore_config;
 
 // Implement your file operations here
 static int device_open(struct inode *inodep, struct file *filep) {
-  printk(KERN_INFO "/dev/restore_memory: Device has been opened\n");
-  if (restore_memory_config.state != ENTRY) {
+  printk(KERN_INFO "/dev/krestore: Device has been opened\n");
+  if (krestore_config.state != ENTRY) {
     return -EBUSY;
   }
-  restore_memory_config.state = REMAPPING;
-  printk(KERN_INFO "/dev/restore_memory: Device is ready -> REMAPPING\n");
+  krestore_config.state = REMAPPING;
+  printk(KERN_INFO "/dev/krestore: Device is ready -> REMAPPING\n");
   return 0;
 }
 
 static int device_release(struct inode *inodep, struct file *filep) {
-  restore_memory_config.state = ENTRY;
-  restore_memory_config.pid = 0;
-  printk(KERN_INFO "/dev/restore_memory: Device has been closed -> ENTRY\n");
+  krestore_config.state = ENTRY;
+  krestore_config.pid = 0;
+  printk(KERN_INFO "/dev/krestore: Device has been closed -> ENTRY\n");
   return 0;
 }
 
@@ -50,7 +50,7 @@ static ssize_t device_read(struct file *filep, char *buffer, size_t len,
 
 static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
                             loff_t *offset) {
-  switch (restore_memory_config.state) {
+  switch (krestore_config.state) {
 
   case REMAPPING:
     process_dump_t dump;
@@ -58,12 +58,21 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret_parse != 0) {
       return ret_parse;
     }
-    int ret_unmap = unmap_all();
-    if (ret_unmap != 0) {
-      return ret_unmap;
-    }
     print_memory_regions(dump.regions, dump.num_regions);
-    return 0;
+
+    int ret = 0;
+    ret = unmap_all();
+    if (ret != 0) {
+      goto free_return;
+    }
+    // ret = map_all(dump.regions, dump.num_regions);
+    // if (ret != 0) {
+    //   goto free_return;
+    // }
+
+  free_return:
+    free_process_dump(&dump);
+    return ret;
 
   default:
     return -EINVAL;
@@ -74,7 +83,7 @@ static void print_memory_regions(const memory_region_t *regions, size_t num) {
   printk(KERN_INFO "Number of regions: %zu\n", num);
   size_t i = 0;
   for (; i < num; i++) {
-    printk(KERN_INFO "/dev/restore_memory: Region %zu: %lx-%lx %s %s %zu\n", i,
+    printk(KERN_INFO "/dev/krestore: Region %zu: %lx-%lx %s %s %zu\n", i,
            regions[i].start, regions[i].end, regions[i].permissions,
            regions[i].path, regions[i].size);
   }
@@ -104,13 +113,66 @@ static int unmap_all(void) {
   return ret;
 }
 
+// static unsigned long parse_permissions(const char *permissions) {
+//   unsigned long ret = 0;
+//   if (permissions[0] == 'r') {
+//     ret |= PROT_READ;
+//   }
+//   if (permissions[1] == 'w') {
+//     ret |= PROT_WRITE;
+//   }
+//   if (permissions[2] == 'x') {
+//     ret |= PROT_EXEC;
+//   }
+//   return ret;
+// }
+
+// static int map_all(const memory_region_t *regions, size_t num) {
+//   size_t ptr = 0; // pointer to the current region
+//   int ret = 0;
+//   for (; ptr < num; ptr++) {
+//     memory_region_t *region = &regions[ptr];
+//     unsigned long start = region->start;
+//     unsigned long size = region->size;
+//     unsigned long permissions = parse_permissions(region->permissions);
+//     const char *path = region->path;
+//     // skip kernel-related regions
+//     if (strcmp(path, "[vdso]") == 0 || strcmp(path, "[vsyscall]") == 0 ||
+//         strcmp(path, "[vvar]") == 0) {
+//       continue;
+//     }
+
+//     const char *content = region->content;
+//     unsigned long flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+//     if (strcmp(path, "[stack]") == 0) {
+//       flags |= MAP_GROWSDOWN;
+//     }
+
+//     ret = vm_mmap(NULL, start, size, permissions, flags, 0);
+//     if (ret != 0) {
+//       printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
+//              start, start + size, path);
+//       break;
+//     }
+
+//     // if (content != NULL) {
+//     //   ret = copy_to_user((void *)start, content, size);
+//     //   if (ret != 0) {
+//     //     break;
+//     //   }
+//     // }
+//   }
+
+//   return ret;
+// }
+
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len) {
   if (len != sizeof(process_dump_t)) {
     return -EINVAL;
   }
 
-  // shallow copy of the dump struct: regs, num_regions
+  // shallow copy of the dump struct: regs, mm_info, num_regions
   process_dump_t dump_tmp;
   if (copy_from_user(&dump_tmp, buffer, len) != 0) {
     return -EFAULT;
@@ -160,6 +222,16 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
   return 0;
 }
 
+static void free_process_dump(process_dump_t *dump) {
+  size_t i = 0;
+  for (; i < dump->num_regions; i++) {
+    if (dump->regions[i].content != NULL) {
+      kfree(dump->regions[i].content);
+    }
+  }
+  kfree(dump->regions);
+}
+
 static int __init virtual_device_init(void) {
   // Register the device with a major number
   major_number = register_chrdev(0, DEVICE_NAME, &fops);
@@ -184,7 +256,7 @@ static int __init virtual_device_init(void) {
     return PTR_ERR(device_device);
   }
 
-  restore_memory_config.state = ENTRY;
+  krestore_config.state = ENTRY;
 
   return 0;
 }
