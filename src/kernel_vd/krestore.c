@@ -58,7 +58,6 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret_parse != 0) {
       return ret_parse;
     }
-    print_memory_regions(dump.regions, dump.num_regions);
 
     int ret = 0;
     ret = unmap_all();
@@ -70,22 +69,16 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
       goto free_return;
     }
 
+    // TODO: restore registers and mm_info
+
+    // TODO: flush TLB, icache, and dcache
+
   free_return:
     free_process_dump(&dump);
     return ret;
 
   default:
     return -EINVAL;
-  }
-}
-
-static void print_memory_regions(const memory_region_t *regions, size_t num) {
-  printk(KERN_INFO "Number of regions: %zu\n", num);
-  size_t i = 0;
-  for (; i < num; i++) {
-    printk(KERN_INFO "/dev/krestore: Region %zu: %lx-%lx %s %s %zu\n", i,
-           regions[i].start, regions[i].end, regions[i].permissions,
-           regions[i].path, regions[i].size);
   }
 }
 
@@ -148,22 +141,46 @@ static int map_all(const memory_region_t *regions, size_t num) {
       flags |= MAP_GROWSDOWN;
     }
 
-    ret = vm_mmap(NULL, start, size, permissions, flags, 0);
+    // mmap with write permission first
+    ret = vm_mmap(NULL, start, size, permissions | PROT_WRITE, flags, 0);
     if (IS_ERR_VALUE(ret)) {
       printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
              start, start + size, path);
-      break;
+      goto fail;
     }
 
-    // if (content != NULL) {
-    //   ret = copy_to_user((void *)start, content, size);
-    //   if (ret != 0) {
-    //     break;
-    //   }
-    // }
+    if (content != NULL) {
+      ret = copy_to_user((void *)start, content, size);
+      if (ret != 0) {
+        printk(KERN_ALERT
+               "/dev/krestore: Failed to copy content to region %lx-%lx, %s\n",
+               start, start + size, path);
+        goto fail;
+      }
+    }
+
+    // remap with the correct permission if the region is read-only at first
+    if ((permissions & PROT_WRITE) == 0) {
+      ret = vm_munmap(start, size);
+      if (ret != 0) {
+        printk(KERN_ALERT
+               "/dev/krestore: Failed to munmap region %lx-%lx, %s\n",
+               start, start + size, path);
+        goto fail;
+      }
+      ret = vm_mmap(NULL, start, size, permissions, flags, 0);
+      if (IS_ERR_VALUE(ret)) {
+        printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
+               start, start + size, path);
+        goto fail;
+      }
+    }
   }
 
-  return ret;
+  return 0;
+
+fail:
+  return -1;
 }
 
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
