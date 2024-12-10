@@ -59,4 +59,10 @@ static unsigned long parse_permissions(const char *permissions);
 // Mmap all regions to the current user program except the kernel-related ones.
 static int map_all(const memory_region_t *regions, size_t num);
 
+// update mm_struct
+static int update_mm_info(mm_info_t *mm_info, unsigned long heap_size);
+
+// update register value
+static int update_regs(struct user_regs_struct *regs);
+
 #endif
