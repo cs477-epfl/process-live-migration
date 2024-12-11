@@ -84,10 +84,8 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
       goto free_return;
     }
     // assign the correct value to mm_struct, size of brk needs to be provided
-    ret = update_mm_info(&dump.mm_info, heap_size);
-    if (ret != 0) {
-      goto free_return;
-    }
+    update_mm_info(&dump.mm_info, heap_size);
+    update_regs(&dump.regs);
 
 
   free_return:
@@ -200,39 +198,42 @@ static int update_mm_info(mm_info_t *mm_info, unsigned long heap_size) {
   return 0;
 }
 
-// static int update_regs(struct user_regs_struct *user_regs) {
-//   struct `pt_regs *regs = task_pt_regs(current);
-//   // Copy general-purpose registers
-//   regs->rax = user_regs.rax;
-//   regs->rbx = user_regs.rbx;
-//   regs->rcx = user_regs.rcx;
-//   regs->rdx = user_regs.rdx;
-//   regs->rsi = user_regs.rsi;
-//   regs->rdi = user_regs.rdi;
-//   regs->rbp = user_regs.rbp;
-//   regs->rsp = user_regs.rsp;
-//   regs->r8  = user_regs.r8;
-//   regs->r9  = user_regs.r9;
-//   regs->r10 = user_regs.r10;
-//   regs->r11 = user_regs.r11;
-//   regs->r12 = user_regs.r12;
-//   regs->r13 = user_regs.r13;
-//   regs->r14 = user_regs.r14;
-//   regs->r15 = user_regs.r15;
+static int update_regs(struct user_regs_struct *user_regs) {
+  struct pt_regs *regs = task_pt_regs(current);
 
-// // Copy instruction pointer and flags
-// regs->rip = user_regs.rip;
-// regs->eflags = user_regs.eflags;
+  // Map and copy registers
+  regs->r15 = user_regs->r15;
+  regs->r14 = user_regs->r14;
+  regs->r13 = user_regs->r13;
+  regs->r12 = user_regs->r12;
+  regs->bp = user_regs->bp;
+  regs->bx = user_regs->bx;
+  regs->r11 = user_regs->r11;
+  regs->r10 = user_regs->r10;
+  regs->r9  = user_regs->r9;
+  regs->r8  = user_regs->r8;
+  regs->ax = user_regs->ax;
+  regs->cx = user_regs->cx;
+  regs->dx = user_regs->dx;
+  regs->si = user_regs->si;
+  regs->di = user_regs->di;
+  regs->orig_ax = user_regs->orig_ax;
+  regs->ip = user_regs->ip;
+  regs->cs = user_regs->cs;  // Use csx if extended is needed
+  regs->flags = user_regs->flags;
+  regs->sp = user_regs->sp;
+  regs->ss = user_regs->ss;  // Use ssx if extended is needed
+  // segment registers (optional)
+  // regs->fs_base = user_regs->fs_base;
+  // regs->gs_base = user_regs->gs_base;
+  // regs->ds = user_regs->ds;
+  // regs->es = user_regs->es;
+  // regs->fs = user_regs->fs;
+  // regs->gs = user_regs->gs;
 
-// // Copy segment registers if necessary (use caution)
-// // regs->cs = user_regs.cs;
-// // regs->ss = user_regs.ss;
-// // regs->ds = user_regs.ds;
-// // regs->es = user_regs.es;
-// // regs->fs = user_regs.fs;
-// // regs->gs = user_regs.gs;
-//   return 0;
-// }
+
+  return 0;
+}
 
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len) {

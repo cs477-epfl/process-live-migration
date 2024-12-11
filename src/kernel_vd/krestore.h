@@ -12,6 +12,9 @@
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/ptrace.h>
+#include <asm/processor.h>
+#include <asm/stacktrace.h>
 
 typedef struct {
   unsigned long start;
