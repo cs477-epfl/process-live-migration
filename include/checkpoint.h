@@ -22,6 +22,7 @@ typedef struct {
   unsigned long end;
   char permissions[5]; // e.g., "rwxp"
   char path[256];      // Path or descriptor (e.g., "[heap]")
+  unsigned long offset;
   size_t size;
   char *content;
 } memory_region_t;

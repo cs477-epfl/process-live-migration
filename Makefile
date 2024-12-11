@@ -27,6 +27,7 @@ $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@
 
 $(BUILDDIR)/test_parser: $(BUILDDIR)/test_parser.o $(BUILDDIR)/parse_checkpoint.o
+	$(CC) $^ -o $@
 
 $(BUILDDIR)/test_parser.o: $(SRCDIR)/test_parser.c
 	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@

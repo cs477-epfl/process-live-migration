@@ -3,7 +3,7 @@
 # Script to find the PID of the last process named "count" and run ./ptrace with it
 
 # Find the PID(s) of the process(es) named "count"
-pids=$(pgrep -x count)
+pids=$(ps -A | grep count | awk '{print $1}')
 
 # Check if any PIDs were found
 if [ -z "$pids" ]; then

@@ -51,6 +51,7 @@ int load_process_dump(const char *filename, process_dump_t *dump) {
     if (fread(&region->start, sizeof(region->start), 1, file) != 1 ||
         fread(&region->end, sizeof(region->end), 1, file) != 1 ||
         fread(&region->size, sizeof(region->size), 1, file) != 1 ||
+        fread(&region->offset, sizeof(region->offset), 1, file) != 1 ||
         fread(region->permissions, sizeof(region->permissions), 1, file) != 1 ||
         fread(region->path, sizeof(region->path), 1, file) != 1) {
       perror("fread region metadata");
@@ -59,8 +60,16 @@ int load_process_dump(const char *filename, process_dump_t *dump) {
       return -1;
     }
 
-    // Read the memory content
-    if (region->size > 0) {
+    printf("Region %zu: %lx-%lx (%s) %s (offset=%lx), size: %zu\n", i,
+           region->start, region->end, region->permissions, region->path,
+           region->offset, region->size);
+
+    // Read the memory content when it is anonymous
+    if (region->size > 0 &&
+        !(strlen(region->path) > 0 && strstr(region->path, "/")) &&
+        !(strstr(region->path, "[vvar]") ||
+          strstr(region->path, "[vsyscall]") ||
+          strstr(region->path, "[vdso]"))) {
       region->content = malloc(region->size);
       if (!region->content) {
         perror("malloc region content");
@@ -105,8 +114,9 @@ int load_process_dump(const char *filename, process_dump_t *dump) {
 //   printf("Number of memory regions: %zu\n", dump.num_regions);
 //   for (size_t i = 0; i < dump.num_regions; i++) {
 //     memory_region_t *region = &dump.regions[i];
-//     printf("Region %zu: %lx-%lx (%s) %s, size: %zu\n", i, region->start,
-//            region->end, region->permissions, region->path, region->size);
+//     printf("Region %zu: %lx-%lx (%s) %s (offset=%lx), size: %zu\n", i,
+//            region->start, region->end, region->permissions, region->path,
+//            region->offset, region->size);
 //     // Optionally, do something with 'region->content'
 //   }
 

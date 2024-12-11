@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
   // You can access registers via 'dump.regs' and memory regions via
   // 'dump.regions'. For example, to print out the memory regions:
   printf("Registers loaded.\n");
-  //print the memory info
+  // print the memory info
   mm_info_t *mm_info = &dump.mm_info;
   printf("start_code: 0x%lx\n", mm_info->start_code);
   printf("end_code:   0x%lx\n", mm_info->end_code);
@@ -30,8 +30,9 @@ int main(int argc, char *argv[]) {
   printf("Number of memory regions: %zu\n", dump.num_regions);
   for (size_t i = 0; i < dump.num_regions; i++) {
     memory_region_t *region = &dump.regions[i];
-    printf("Region %zu: %lx-%lx (%s) %s, size: %zu\n", i, region->start,
-           region->end, region->permissions, region->path, region->size);
+    printf("Region %zu: %lx-%lx (%s) %s (offset = %lu), size: %zu\n", i,
+           region->start, region->end, region->permissions, region->path,
+           region->offset, region->size);
     // Optionally, do something with 'region->content'
   }
 

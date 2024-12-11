@@ -83,7 +83,6 @@ int read_registers(pid_t pid, struct user_regs_struct *regs) {
   return 0;
 }
 
-
 int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   char stat_path[256];
   snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", pid);
@@ -102,13 +101,14 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   }
   fclose(stat_file);
 
-  //printf("content: %s\n", buffer);
+  // printf("content: %s\n", buffer);
 
   // Variables to hold parsed values
   int pid_in_stat;
   char comm[256];
   char state;
-  unsigned long long field_values[52]; // Use unsigned long long for large values
+  unsigned long long
+      field_values[52]; // Use unsigned long long for large values
   memset(field_values, 0, sizeof(field_values));
 
   // Parse pid, comm, and state
@@ -140,7 +140,8 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   ptr = end_comm + 1;
 
   // Skip spaces
-  while (*ptr == ' ' || *ptr == '\t') ptr++;
+  while (*ptr == ' ' || *ptr == '\t')
+    ptr++;
 
   // Extract state
   if (sscanf(ptr, "%c", &state) != 1) {
@@ -155,7 +156,8 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   int field_index = 4;
   while (field_index < 52 && *ptr != '\0') {
     // Skip spaces
-    while (*ptr == ' ' || *ptr == '\t') ptr++;
+    while (*ptr == ' ' || *ptr == '\t')
+      ptr++;
 
     if (*ptr == '\0') {
       break;
@@ -165,8 +167,8 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
     errno = 0;
     unsigned long long value = strtoull(ptr, &endptr, 10);
     // print the characters between ptr and endptr
-    //printf("field %d: %.*s (0x%llx)\n", field_index, (int)(endptr - ptr), ptr, value);
-    //printf("field %d: %llu\n", field_index + 4, value);
+    // printf("field %d: %.*s (0x%llx)\n", field_index, (int)(endptr - ptr),
+    // ptr, value); printf("field %d: %llu\n", field_index + 4, value);
     if (errno != 0 || ptr == endptr) {
       fprintf(stderr, "Failed to parse field %d\n", field_index);
       return -1;
@@ -178,17 +180,18 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   }
 
   if (field_index < 52) {
-    fprintf(stderr, "Expected at least 52 fields, but got %d\n", field_index + 3); // +3 for pid, comm, state
+    fprintf(stderr, "Expected at least 52 fields, but got %d\n",
+            field_index + 3); // +3 for pid, comm, state
     return -1;
   }
 
   // Assign the values to mm_info
-  mm_info->start_code  = (unsigned long)field_values[26]; // Field 25
-  mm_info->end_code    = (unsigned long)field_values[27]; // Field 26
+  mm_info->start_code = (unsigned long)field_values[26];  // Field 25
+  mm_info->end_code = (unsigned long)field_values[27];    // Field 26
   mm_info->start_stack = (unsigned long)field_values[28]; // Field 28
-  mm_info->start_data  = (unsigned long)field_values[45]; // Field 45
-  mm_info->end_data    = (unsigned long)field_values[46]; // Field 46
-  mm_info->start_brk   = (unsigned long)field_values[47]; // Field 47
+  mm_info->start_data = (unsigned long)field_values[45];  // Field 45
+  mm_info->end_data = (unsigned long)field_values[46];    // Field 46
+  mm_info->start_brk = (unsigned long)field_values[47];   // Field 47
 
   // Debug prints to verify values
   printf("Parsed mm_struct info for PID %d:\n", pid_in_stat);
@@ -203,7 +206,6 @@ int read_mm_info(pid_t pid, mm_info_t *mm_info) {
   return 0;
 }
 
-
 int get_memory_area(memory_region_t *region, const char *mem_path) {
   // Read the memory content
   region->content = malloc(region->size);
@@ -216,6 +218,7 @@ int get_memory_area(memory_region_t *region, const char *mem_path) {
   if (mem_fd == -1) {
     perror("open mem");
     free(region->content);
+    region->content = NULL;
     return -1;
   }
 
@@ -226,10 +229,49 @@ int get_memory_area(memory_region_t *region, const char *mem_path) {
     // due to permissions, so we handle partial reads or errors gracefully
     perror("pread");
     free(region->content);
+    region->content = NULL;
     close(mem_fd);
     return -1;
   }
   close(mem_fd);
+  return 0;
+}
+
+int read_memory_region(const char *line, memory_region_t *region,
+                       const char *mem_path) {
+  // Format: start_addr-end_addr perms offset dev inode pathname
+  char dev[12];
+  unsigned long inode;
+  int items_parsed = sscanf(line, "%lx-%lx %4s %lx %11s %lu %255[^\n]",
+                            &region->start, &region->end, region->permissions,
+                            &region->offset, dev, &inode, region->path);
+  if (items_parsed < 6) {
+    fprintf(stderr, "Failed to parse line: %s\n", line);
+    return -1;
+  }
+  if (items_parsed < 7) {
+    strcpy(region->path, "");
+  }
+
+  region->size = region->end - region->start;
+
+  if (should_save_region(region)) {
+    if (strlen(region->path) > 0 && strstr(region->path, "/") != NULL) {
+      // if file-backed, don't save the content
+      region->content = NULL;
+    } else {
+      // anonymous memory, read the content
+      if (get_memory_area(region, mem_path) < 0) {
+        return -1;
+      }
+    }
+    printf("%lx-%lx %s %s (offset: %lx) size: %zu\n", region->start,
+           region->end, region->permissions, region->path, region->offset,
+           region->size);
+  } else {
+    printf("skip content: %s\n", line);
+  }
+
   return 0;
 }
 
@@ -261,32 +303,9 @@ int read_memory_regions(pid_t pid, process_dump_t *dump) {
     memory_region_t region;
     memset(&region, 0, sizeof(region));
 
-    // Parse the line
-    // Format: start_addr-end_addr perms offset dev inode pathname
-    unsigned long offset;
-    char dev[12];
-    unsigned long inode;
-    int items_parsed = sscanf(line, "%lx-%lx %4s %lx %11s %lu %255[^\n]",
-                              &region.start, &region.end, region.permissions,
-                              &offset, dev, &inode, region.path);
-    if (items_parsed < 6) {
-      fprintf(stderr, "Failed to parse line: %s\n", line);
-      continue;
-    }
-    if (items_parsed < 7) {
-      strcpy(region.path, "");
-    }
-
-    region.size = region.end - region.start;
-
-    // Check if the region should be saved, if yes, read the content from mem
-    // file
-    if (should_save_region(&region)) {
-      get_memory_area(&region, mem_path);
-      printf("save memory region [%zu]: %s\n", dump->num_regions, line);
-    } else {
-      region.size = 0;
-      printf("skip memory region [%zu]: %s\n", dump->num_regions, line);
+    if (read_memory_region(line, &region, mem_path) < 0) {
+      fclose(maps_file);
+      return -1;
     }
 
     // Add the region to the dump
@@ -344,6 +363,7 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
     if (fwrite(&region->start, sizeof(region->start), 1, file) != 1 ||
         fwrite(&region->end, sizeof(region->end), 1, file) != 1 ||
         fwrite(&region->size, sizeof(region->size), 1, file) != 1 ||
+        fwrite(&region->offset, sizeof(region->offset), 1, file) != 1 ||
         fwrite(region->permissions, sizeof(region->permissions), 1, file) !=
             1 ||
         fwrite(region->path, sizeof(region->path), 1, file) != 1) {
@@ -353,7 +373,7 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
     }
 
     // Write the memory content
-    if (region->size == 0) {
+    if (region->size == 0 || region->content == NULL) {
       continue;
     }
     if (fwrite(region->content, 1, region->size, file) != region->size) {
