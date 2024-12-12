@@ -15,6 +15,8 @@
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+//#include <asm/tlb.h>
+#include <asm/tlbflush.h>
 
 typedef struct {
   unsigned long start;
@@ -26,7 +28,7 @@ typedef struct {
   char *content;
 } memory_region_t;
 
-// a struct to hold the essential fields in mm_struct
+// A struct to hold the essential fields in mm_struct
 typedef struct {
   unsigned long start_code;
   unsigned long end_code;
@@ -63,10 +65,11 @@ static unsigned long parse_permissions(const char *permissions);
 // Mmap all regions to the current user program except the kernel-related ones.
 static int map_all(const memory_region_t *regions, size_t num);
 
-// update mm_struct
+// Update mm_struct
 static int update_mm_info(mm_info_t *mm_info, unsigned long heap_size);
 
-// update register value
+// Update register value
 static int update_regs(struct user_regs_struct *regs);
 
 #endif
+
