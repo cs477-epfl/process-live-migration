@@ -18,6 +18,7 @@ typedef struct {
   unsigned long end;
   char permissions[5]; // e.g., "rwxp"
   char path[256];      // Path or descriptor (e.g., "[heap]")
+  unsigned long offset;
   size_t size;
   char *content;
 } memory_region_t;
@@ -50,7 +51,6 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len);
 static void free_process_dump(process_dump_t *dump);
 static void print_memory_regions(const memory_region_t *regions, size_t num);
-static void flush_tlb_cache(void);
 
 // Unmmap all regions in the current user program except the kernel-related
 // ones.

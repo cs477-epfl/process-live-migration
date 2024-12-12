@@ -65,13 +65,11 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     if (ret != 0) {
       goto free_return;
     }
-    flush_tlb_cache(); // TODO: maybe unnecessary
 
     ret = map_all(dump.regions, dump.num_regions);
     if (ret != 0) {
       goto free_return;
     }
-    flush_tlb_cache();
 
     // TODO: restore registers and mm_info
 
@@ -108,22 +106,6 @@ static int unmap_all(void) {
   return ret;
 }
 
-// Flush TLB entries and cache lines for current process
-static void flush_tlb_cache(void) {
-  struct mm_struct *mm = current->mm;
-  if (mm) {
-    flush_tlb_mm(mm);
-  }
-  mb(); // Full Linux memory barrier
-#ifdef x86
-  wbinvd(); // Write back and invalidate all cache lines
-  asm volatile("mfence" ::: "memory"); // x86 memory barrier
-#else
-#error "Unsupported architecture"
-#endif
-  printk(KERN_DEBUG "/dev/krestore: Flushed TLB and cache lines\n");
-}
-
 static unsigned long parse_permissions(const char *permissions) {
   unsigned long ret = 0;
   if (permissions[0] == 'r') {
@@ -145,6 +127,7 @@ static int map_all(const memory_region_t *regions, size_t num) {
     memory_region_t *region = &regions[ptr];
     unsigned long start = region->start;
     unsigned long size = region->size;
+    unsigned long offset = region->offset;
     unsigned long permissions = parse_permissions(region->permissions);
     const char *path = region->path;
     // skip kernel-related regions
@@ -154,11 +137,29 @@ static int map_all(const memory_region_t *regions, size_t num) {
     }
 
     const char *content = region->content;
-    unsigned long flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+    unsigned long flags = MAP_PRIVATE | MAP_FIXED;
     if (strcmp(path, "[stack]") == 0) {
       flags |= MAP_GROWSDOWN;
     }
 
+    // file-backed regions
+    if (strlen(path) > 0 && strstr(path, "/")) {
+      struct file *file = filp_open(path, O_RDONLY, 0);
+      if (IS_ERR(file)) {
+        printk(KERN_ALERT "/dev/krestore: Failed to open file %s\n", path);
+        goto fail;
+      }
+      ret = vm_mmap(file, start, size, permissions, flags, offset);
+      filp_close(file, NULL);
+      if (IS_ERR_VALUE(ret)) {
+        printk(KERN_ALERT "/dev/krestore: Failed to mmap region %lx-%lx, %s\n",
+               start, start + size, path);
+        goto fail;
+      }
+      continue;
+    }
+
+    flags |= MAP_ANONYMOUS; // anonymous regions
     // mmap with write permission first
     ret = vm_mmap(NULL, start, size, permissions | PROT_WRITE, flags, 0);
     if (IS_ERR_VALUE(ret)) {
@@ -222,9 +223,24 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
     kfree(dump_tmp.regions);
     return -EFAULT;
   }
+  // check the region.path exists
+  size_t i = 0;
+  for (; i < dump_tmp.num_regions; i++) {
+    if (strlen(dump_tmp.regions[i].path) > 0 &&
+        strstr(dump_tmp.regions[i].path, "/")) {
+      struct file *file = filp_open(dump_tmp.regions[i].path, O_RDONLY, 0);
+      if (IS_ERR(file)) {
+        kfree(dump_tmp.regions);
+        printk(KERN_ALERT "/dev/krestore: Failed to open file %s\n",
+               dump_tmp.regions[i].path);
+        return -ENOENT;
+      }
+      filp_close(file, NULL);
+    }
+  }
 
   // deep copy: copy the contents of each region if not null
-  size_t i = 0;
+  i = 0;
   for (; i < dump_tmp.num_regions; i++) {
     if (dump_tmp.regions[i].content != NULL) {
       char *user_content = dump_tmp.regions[i].content;
