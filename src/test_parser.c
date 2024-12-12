@@ -34,8 +34,16 @@ int main(int argc, char *argv[]) {
            region->start, region->end, region->permissions, region->path,
            region->offset, region->size);
     // Optionally, do something with 'region->content'
+    if (region->content) {
+      printf("Content: ");
+      for (size_t j = 0; j < region->size && j < 3; j++) {
+        printf("%02x ", (unsigned char)region->content[j]);
+      }
+      printf("\n");
+    } else {
+      printf("Content: (null)\n");
+    }
   }
-
   // Remember to free the allocated memory
   free_process_dump(&dump);
   return EXIT_SUCCESS;
