@@ -12,6 +12,8 @@
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+//#include <asm/tlb.h>
+#include <asm/tlbflush.h>
 
 typedef struct {
   unsigned long start;

@@ -1,6 +1,5 @@
 #include "krestore.h"
 
-#define x86
 #define DEVICE_NAME "restore_process"
 #define CLASS_NAME "virtual"
 
@@ -112,10 +111,11 @@ static int unmap_all(void) {
 static void flush_tlb_cache(void) {
   struct mm_struct *mm = current->mm;
   if (mm) {
-    flush_tlb_mm(mm);
+    //flush_tlb_mm(mm);
+    __flush_tlb_all();
   }
   mb(); // Full Linux memory barrier
-#ifdef x86
+#ifdef __x86_64__
   wbinvd(); // Write back and invalidate all cache lines
   asm volatile("mfence" ::: "memory"); // x86 memory barrier
 #else
