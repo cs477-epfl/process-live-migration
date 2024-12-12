@@ -79,6 +79,8 @@ int read_registers(pid_t pid, struct user_regs_struct *regs) {
     return -1;
   }
 
+  printf("pc addr = %lx\n", regs->rip);
+
   printf("Registers retrieved for PID %d\n", pid);
   return 0;
 }
@@ -287,6 +289,24 @@ int read_memory_regions(pid_t pid, process_dump_t *dump) {
     perror("fopen maps");
     return -1;
   }
+
+  // print code region in main()
+  unsigned long code_start = 0x401745;
+  unsigned long code_end = 0x40179d + 3;
+  FILE *mem_file = fopen(mem_path, "r");
+  if (!mem_file) {
+    perror("fopen mem");
+    fclose(maps_file);
+    return -1;
+  }
+  printf("Code region in main():\n");
+  fseek(mem_file, code_start, SEEK_SET);
+  unsigned char code[code_end - code_start];
+  fread(code, 1, code_end - code_start, mem_file);
+  for (size_t i = 0; i < code_end - code_start; i++) {
+    printf("%02x ", code[i]);
+  }
+  printf("\n");
 
   // Initialize memory regions array
   size_t regions_capacity = 10;

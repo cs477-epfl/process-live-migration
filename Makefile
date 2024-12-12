@@ -8,6 +8,7 @@ else
 	CFLAGS += -O3
 endif
 CFLAGS += -c
+WORKLOADCFLAGS = -static -no-pie -fno-pic
 
 INCLUDEDIR = include
 BUILDDIR = build
@@ -18,10 +19,10 @@ WORKLOADS = $(BUILDDIR)/count
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(BUILDDIR)/test_parser $(WORKLOADS)
 
 $(BUILDDIR)/count: $(BUILDDIR)/count.o
-	$(CC) $^ -o $@
+	$(CC) $(WORKLOADCFLAGS) $^ -o $@
 
 $(BUILDDIR)/count.o: $(SRCDIR)/count.c
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@

@@ -73,19 +73,19 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
 
     // access the size of heap
     size_t idx = 0;
-    unsigned long heap_size = 0;
+    unsigned long brk_guess = 0;
     for (; idx < dump.num_regions; idx++) {
       if (strcmp(dump.regions[idx].path, "[heap]") == 0) {
-        heap_size = dump.regions[idx].size;
+        brk_guess = dump.regions[idx].end;
         break;
       }
     }
-    if (heap_size == 0) {
+    if (brk_guess == 0) {
       ret = -EINVAL;
       goto free_return;
     }
     // assign the correct value to mm_struct, size of brk needs to be provided
-    update_mm_info(&dump.mm_info, heap_size);
+    update_mm_info(&dump.mm_info, brk_guess);
     update_regs(&dump.regs);
 
   free_return:
@@ -217,17 +217,18 @@ fail:
   return -1;
 }
 
-static int update_mm_info(mm_info_t *mm_info, unsigned long heap_size) {
+static int update_mm_info(mm_info_t *mm_info, unsigned long brk_guess) {
   struct mm_struct *mm = current->mm;
-  down_write(&mm->mmap_lock);
-  mm_info->start_code = mm->start_code;
-  mm_info->end_code = mm->end_code;
-  mm_info->start_data = mm->start_data;
-  mm_info->end_data = mm->end_data;
-  mm_info->start_brk = mm->start_brk;
-  mm_info->brk = mm->start_brk + heap_size;
-  mm_info->start_stack = mm->start_stack;
-  up_write(&mm->mmap_lock);
+  mmap_write_lock(mm);
+  mm->start_code = mm_info->start_code;
+  mm->end_code = mm_info->end_code;
+  mm->start_data = mm_info->start_data;
+  mm->end_data = mm_info->end_data;
+  mm->start_brk = mm_info->start_brk;
+  mm->brk = brk_guess;
+  mm->start_stack = mm_info->start_stack;
+  mmap_write_unlock(mm);
+
   return 0;
 }
 
@@ -263,6 +264,23 @@ static int update_regs(struct user_regs_struct *user_regs) {
   // regs->es = user_regs->es;
   // regs->fs = user_regs->fs;
   // regs->gs = user_regs->gs;
+
+  printk(KERN_INFO "/dev/krestore: PC addr = %lx\n", regs->ip);
+
+  const unsigned long code_start = 0x401745;
+  const unsigned long code_end = 0x40179d + 3;
+  char buf[code_end - code_start];
+
+  if (copy_from_user(buf, code_start, code_end - code_start) != 0) {
+    return -EFAULT;
+  }
+  // print the code region
+  printk(KERN_INFO "/dev/krestore: Code region in main(): ");
+  size_t i = 0;
+  for (; i < code_end - code_start; i++) {
+    printk(KERN_CONT "%02x ", buf[i]);
+  }
+  printk(KERN_CONT "\n");
 
   return 0;
 }
