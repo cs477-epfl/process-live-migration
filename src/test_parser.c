@@ -3,33 +3,37 @@
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <dump_file>\n", argv[0]);
-    return EXIT_FAILURE;
+    return -1;
   }
 
-  const char *dump_file = argv[1];
+  const char *filename = argv[1];
   process_dump_t dump;
-  memset(&dump, 0, sizeof(dump));
 
-  if (load_process_dump(dump_file, &dump) == -1) {
-    return EXIT_FAILURE;
+  if (load_process_dump(filename, &dump) != 0) {
+    fprintf(stderr, "Failed to load process dump\n");
+    return -1;
   }
 
-  // At this point, 'dump' contains the loaded process state.
-  // You can access registers via 'dump.regs' and memory regions via
-  // 'dump.regions'. For example, to print out the memory regions:
-  printf("Registers loaded.\n");
-  // print the memory info
-  mm_info_t *mm_info = &dump.mm_info;
-  printf("start_code: 0x%lx\n", mm_info->start_code);
-  printf("end_code:   0x%lx\n", mm_info->end_code);
-  printf("start_data: 0x%lx\n", mm_info->start_data);
-  printf("end_data:   0x%lx\n", mm_info->end_data);
-  printf("start_brk:  0x%lx\n", mm_info->start_brk);
-  printf("brk:        0x%lx\n", mm_info->brk);
-  printf("start_stack: 0x%lx\n", mm_info->start_stack);
-  printf("Number of memory regions: %zu\n", dump.num_regions);
-  for (size_t i = 0; i < dump.num_regions; i++) {
-    memory_region_t *region = &dump.regions[i];
+  // Print important fields from the user struct
+  printf("User struct details:\n");
+  printf("RIP: 0x%llx\n", dump.user_dump.regs.rip);
+  printf("RSP: 0x%llx\n", dump.user_dump.regs.rsp);
+  printf("RAX: 0x%llx\n", dump.user_dump.regs.rax);
+  printf("RBX: 0x%llx\n", dump.user_dump.regs.rbx);
+  printf("RCX: 0x%llx\n", dump.user_dump.regs.rcx);
+  printf("RDX: 0x%llx\n", dump.user_dump.regs.rdx);
+  printf("Command: %s\n", dump.user_dump.u_comm);
+
+  // print other user struct info
+  printf("start_code: 0x%llx\n", dump.user_dump.start_code);
+  printf("start_stack: 0x%llx\n", dump.user_dump.start_stack);
+  printf("tsize: %llu\n", dump.user_dump.u_tsize);
+  printf("dsize: %llu\n", dump.user_dump.u_dsize);
+  printf("ssize: %llu\n", dump.user_dump.u_ssize);
+
+  printf("Number of memory regions: %zu\n", dump.memory_dump.num_regions);
+  for (size_t i = 0; i < dump.memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump.memory_dump.regions[i];
     printf("Region %zu: %lx-%lx (%s) %s (offset = %lu), size: %zu\n", i,
            region->start, region->end, region->permissions, region->path,
            region->offset, region->size);
@@ -44,7 +48,10 @@ int main(int argc, char *argv[]) {
       printf("Content: (null)\n");
     }
   }
-  // Remember to free the allocated memory
+
+
+  // Free the loaded memory dump
   free_process_dump(&dump);
-  return EXIT_SUCCESS;
+
+  return 0;
 }

@@ -23,20 +23,15 @@ int main(int argc, char *argv[]) {
   process_dump_t dump;
   memset(&dump, 0, sizeof(dump));
 
-  // Save registers
-  if (read_registers(target_pid, &dump.regs) == -1) {
-    detach_process(target_pid);
-    return EXIT_FAILURE;
-  }
-
-  // save mm_info
-  if (read_mm_info(target_pid, &dump.mm_info) == -1) {
-    detach_process(target_pid);
-    return EXIT_FAILURE;
-  }
-
   // Read memory regions
-  if (read_memory_regions(target_pid, &dump) == -1) {
+  if (read_memory_regions(target_pid, &dump.memory_dump) == -1) {
+    detach_process(target_pid);
+    free_process_dump(&dump);
+    return EXIT_FAILURE;
+  }
+
+  // read user info
+  if (read_user_info(target_pid, &dump.user_dump) == -1) {
     detach_process(target_pid);
     free_process_dump(&dump);
     return EXIT_FAILURE;
@@ -70,142 +65,6 @@ bool should_save_region(const memory_region_t *region) {
     return false;
 
   return true;
-}
-
-int read_registers(pid_t pid, struct user_regs_struct *regs) {
-  // Retrieve the register values
-  if (ptrace(PTRACE_GETREGS, pid, NULL, regs) == -1) {
-    perror("ptrace(PTRACE_GETREGS)");
-    return -1;
-  }
-
-  printf("pc addr = %lx\n", regs->rip);
-
-  printf("Registers retrieved for PID %d\n", pid);
-  return 0;
-}
-
-int read_mm_info(pid_t pid, mm_info_t *mm_info) {
-  char stat_path[256];
-  snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", pid);
-
-  FILE *stat_file = fopen(stat_path, "r");
-  if (!stat_file) {
-    perror("fopen stat");
-    return -1;
-  }
-
-  char buffer[8192];
-  if (!fgets(buffer, sizeof(buffer), stat_file)) {
-    perror("fgets stat");
-    fclose(stat_file);
-    return -1;
-  }
-  fclose(stat_file);
-
-  // printf("content: %s\n", buffer);
-
-  // Variables to hold parsed values
-  int pid_in_stat;
-  char comm[256];
-  char state;
-  unsigned long long
-      field_values[52]; // Use unsigned long long for large values
-  memset(field_values, 0, sizeof(field_values));
-
-  // Parse pid, comm, and state
-  // The comm field can contain spaces and is enclosed in parentheses
-  // We need to locate the opening and closing parentheses
-  char *ptr = buffer;
-  char *start_comm = strchr(ptr, '(');
-  char *end_comm = strrchr(ptr, ')');
-
-  if (!start_comm || !end_comm || start_comm >= end_comm) {
-    fprintf(stderr, "Failed to parse comm field in stat file\n");
-    return -1;
-  }
-
-  // Extract pid
-  *start_comm = '\0'; // Temporarily terminate the string to isolate pid
-  if (sscanf(ptr, "%d", &pid_in_stat) != 1) {
-    fprintf(stderr, "Failed to parse pid from stat file\n");
-    return -1;
-  }
-  *start_comm = '('; // Restore the '(' character
-
-  // Extract comm
-  size_t comm_len = end_comm - start_comm - 1;
-  strncpy(comm, start_comm + 1, comm_len);
-  comm[comm_len] = '\0';
-
-  // Move ptr to after the closing parenthesis
-  ptr = end_comm + 1;
-
-  // Skip spaces
-  while (*ptr == ' ' || *ptr == '\t')
-    ptr++;
-
-  // Extract state
-  if (sscanf(ptr, "%c", &state) != 1) {
-    fprintf(stderr, "Failed to parse state from stat file\n");
-    return -1;
-  }
-
-  // Move ptr past the state character
-  ptr++;
-
-  // Now parse the rest of the fields
-  int field_index = 4;
-  while (field_index < 52 && *ptr != '\0') {
-    // Skip spaces
-    while (*ptr == ' ' || *ptr == '\t')
-      ptr++;
-
-    if (*ptr == '\0') {
-      break;
-    }
-
-    char *endptr;
-    errno = 0;
-    unsigned long long value = strtoull(ptr, &endptr, 10);
-    // print the characters between ptr and endptr
-    // printf("field %d: %.*s (0x%llx)\n", field_index, (int)(endptr - ptr),
-    // ptr, value); printf("field %d: %llu\n", field_index + 4, value);
-    if (errno != 0 || ptr == endptr) {
-      fprintf(stderr, "Failed to parse field %d\n", field_index);
-      return -1;
-    }
-
-    field_values[field_index] = value;
-    ptr = endptr;
-    field_index++;
-  }
-
-  if (field_index < 52) {
-    fprintf(stderr, "Expected at least 52 fields, but got %d\n",
-            field_index + 3); // +3 for pid, comm, state
-    return -1;
-  }
-
-  // Assign the values to mm_info
-  mm_info->start_code = (unsigned long)field_values[26];  // Field 25
-  mm_info->end_code = (unsigned long)field_values[27];    // Field 26
-  mm_info->start_stack = (unsigned long)field_values[28]; // Field 28
-  mm_info->start_data = (unsigned long)field_values[45];  // Field 45
-  mm_info->end_data = (unsigned long)field_values[46];    // Field 46
-  mm_info->start_brk = (unsigned long)field_values[47];   // Field 47
-
-  // Debug prints to verify values
-  printf("Parsed mm_struct info for PID %d:\n", pid_in_stat);
-  printf("start_code: 0x%lx\n", mm_info->start_code);
-  printf("end_code:   0x%lx\n", mm_info->end_code);
-  printf("start_data: 0x%lx\n", mm_info->start_data);
-  printf("end_data:   0x%lx\n", mm_info->end_data);
-  printf("start_brk:  0x%lx\n", mm_info->start_brk);
-  printf("brk:        0x%lx\n", mm_info->brk);
-  printf("start_stack: 0x%lx\n", mm_info->start_stack);
-
-  return 0;
 }
 
 int get_memory_area(memory_region_t *region, const char *mem_path) {
@@ -277,7 +136,7 @@ int read_memory_region(const char *line, memory_region_t *region,
   return 0;
 }
 
-int read_memory_regions(pid_t pid, process_dump_t *dump) {
+int read_memory_regions(pid_t pid, memory_dump_t *dump) {
   char maps_path[256], mem_path[256];
   snprintf(
       maps_path, sizeof(maps_path), "/proc/%d/maps",
@@ -347,6 +206,25 @@ int read_memory_regions(pid_t pid, process_dump_t *dump) {
   return 0;
 }
 
+int read_user_info(pid_t pid, struct user *user_dump) {
+  // Calculate the size of the user struct
+  size_t user_struct_size = sizeof(struct user);
+  long data;
+  size_t i;
+  // Read the user struct word by word into the user_data struct
+  for (i = 0; i < user_struct_size / sizeof(long); i++) {
+    errno = 0;
+    data = ptrace(PTRACE_PEEKUSER, pid, sizeof(long) * i, NULL);
+    if (data == -1) {
+      perror("ptrace(PTRACE_PEEKUSER) failed");
+      return -1;
+    }
+    // Copy the data into the user_data struct
+    ((long *)user_dump)[i] = data;
+  }
+  return 0;
+}
+
 int save_process_dump(const char *filename, process_dump_t *dump) {
   FILE *file = fopen(filename, "wb");
   if (!file) {
@@ -354,30 +232,24 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
     return -1;
   }
 
-  // Write the register values
-  if (fwrite(&dump->regs, sizeof(dump->regs), 1, file) != 1) {
-    perror("fwrite regs");
-    fclose(file);
-    return -1;
-  }
 
-  // write mm_info
-  if (fwrite(&dump->mm_info, sizeof(dump->mm_info), 1, file) != 1) {
-    perror("fwrite mm_info");
+  // Write the user struct
+  if (fwrite(&dump->user_dump, sizeof(struct user), 1, file) != 1) {
+    perror("fwrite user_dump");
     fclose(file);
     return -1;
   }
 
   // Write the number of memory regions
-  if (fwrite(&dump->num_regions, sizeof(dump->num_regions), 1, file) != 1) {
+  if (fwrite(&dump->memory_dump.num_regions, sizeof(size_t), 1, file) != 1) {
     perror("fwrite num_regions");
     fclose(file);
     return -1;
   }
 
   // Write each memory region
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    memory_region_t *region = &dump->regions[i];
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump->memory_dump.regions[i];
 
     // Write the memory region metadata
     if (fwrite(&region->start, sizeof(region->start), 1, file) != 1 ||
@@ -409,8 +281,8 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
 }
 
 void free_process_dump(process_dump_t *dump) {
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    free(dump->regions[i].content);
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    free(dump->memory_dump.regions[i].content);
   }
-  free(dump->regions);
+  free(dump->memory_dump.regions);
 }
