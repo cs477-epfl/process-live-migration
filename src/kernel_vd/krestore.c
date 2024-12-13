@@ -270,7 +270,25 @@ static int update_regs(struct user_regs_struct *user_regs) {
   regs->orig_ax = user_regs->orig_ax;
   regs->ip = user_regs->ip;
   regs->cs = user_regs->cs; // Use csx if extended is needed
+
   regs->flags = user_regs->flags;
+  // Preserve system flags while restoring user flags
+  // Important bits in RFLAGS:
+  // Bit 0  (CF) - Carry Flag
+  // Bit 2  (PF) - Parity Flag
+  // Bit 4  (AF) - Auxiliary Flag
+  // Bit 6  (ZF) - Zero Flag
+  // Bit 7  (SF) - Sign Flag
+  // Bit 9  (IF) - Interrupt Flag (must be set to enable interrupts)
+  // Bit 10 (DF) - Direction Flag
+  // Bit 11 (OF) - Overflow Flag
+  // Mask to preserve system bits while updating user bits
+#define USER_FLAGS_MASK 0x3F7FD5
+  regs->flags = (regs->flags & ~USER_FLAGS_MASK) |
+    (user_regs->flags & USER_FLAGS_MASK);
+
+  // Always ensure IF (Interrupt Flag) is set when returning to userspace
+  regs->flags |= X86_EFLAGS_IF;
   regs->sp = user_regs->sp;
   regs->ss = user_regs->ss; // Use ssx if extended is needed
   // segment registers (optional)
@@ -281,7 +299,14 @@ static int update_regs(struct user_regs_struct *user_regs) {
   // regs->fs = user_regs->fs;
   // regs->gs = user_regs->gs;
 
+  printk(KERN_INFO "/dev/krestore: ORIGIN RAX = %lx\n", regs->orig_ax);
+
   printk(KERN_INFO "/dev/krestore: PC addr = %lx\n", regs->ip);
+  char buffer[2];
+  if (copy_from_user(buffer, regs->ip, 2) != 0) {
+    return -EFAULT;
+  }
+  printk(KERN_INFO "/dev/krestore: ip instruction: %02x, %02x", buffer[0], buffer[1]);
 
   const unsigned long code_start = 0x401745;
   const unsigned long code_end = 0x40179d + 3;
