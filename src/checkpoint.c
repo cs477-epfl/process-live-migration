@@ -24,7 +24,14 @@ int main(int argc, char *argv[]) {
   memset(&dump, 0, sizeof(dump));
 
   // Read memory regions
-  if (read_memory_regions(target_pid, &dump) == -1) {
+  if (read_memory_regions(target_pid, &dump.memory_dump) == -1) {
+    detach_process(target_pid);
+    free_process_dump(&dump);
+    return EXIT_FAILURE;
+  }
+
+  // read user info
+  if (read_user_info(target_pid, &dump.user_dump) == -1) {
     detach_process(target_pid);
     free_process_dump(&dump);
     return EXIT_FAILURE;
@@ -129,7 +136,7 @@ int read_memory_region(const char *line, memory_region_t *region,
   return 0;
 }
 
-int read_memory_regions(pid_t pid, process_dump_t *dump) {
+int read_memory_regions(pid_t pid, memory_dump_t *dump) {
   char maps_path[256], mem_path[256];
   snprintf(
       maps_path, sizeof(maps_path), "/proc/%d/maps",
@@ -181,6 +188,25 @@ int read_memory_regions(pid_t pid, process_dump_t *dump) {
   return 0;
 }
 
+int read_user_info(pid_t pid, struct user *user_dump) {
+  // Calculate the size of the user struct
+  size_t user_struct_size = sizeof(struct user);
+  long data;
+  size_t i;
+  // Read the user struct word by word into the user_data struct
+  for (i = 0; i < user_struct_size / sizeof(long); i++) {
+    errno = 0;
+    data = ptrace(PTRACE_PEEKUSER, pid, sizeof(long) * i, NULL);
+    if (data == -1) {
+      perror("ptrace(PTRACE_PEEKUSER) failed");
+      return -1;
+    }
+    // Copy the data into the user_data struct
+    ((long *)user_dump)[i] = data;
+  }
+  return 0;
+}
+
 int save_process_dump(const char *filename, process_dump_t *dump) {
   FILE *file = fopen(filename, "wb");
   if (!file) {
@@ -188,16 +214,23 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
     return -1;
   }
 
+  // Write the user struct
+  if (fwrite(&dump->user_dump, sizeof(struct user), 1, file) != 1) {
+    perror("fwrite user_dump");
+    fclose(file);
+    return -1;
+  }
+
   // Write the number of memory regions
-  if (fwrite(&dump->num_regions, sizeof(dump->num_regions), 1, file) != 1) {
+  if (fwrite(&dump->memory_dump.num_regions, sizeof(size_t), 1, file) != 1) {
     perror("fwrite num_regions");
     fclose(file);
     return -1;
   }
 
   // Write each memory region
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    memory_region_t *region = &dump->regions[i];
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump->memory_dump.regions[i];
 
     // Write the memory region metadata
     if (fwrite(&region->start, sizeof(region->start), 1, file) != 1 ||
@@ -229,8 +262,8 @@ int save_process_dump(const char *filename, process_dump_t *dump) {
 }
 
 void free_process_dump(process_dump_t *dump) {
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    free(dump->regions[i].content);
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    free(dump->memory_dump.regions[i].content);
   }
-  free(dump->regions);
+  free(dump->memory_dump.regions);
 }

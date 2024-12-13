@@ -1,10 +1,10 @@
 #include "parse_checkpoint.h"
 
 void free_process_dump(process_dump_t *dump) {
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    free(dump->regions[i].content);
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    free(dump->memory_dump.regions[i].content);
   }
-  free(dump->regions);
+  free(dump->memory_dump.regions);
 }
 
 int load_process_dump(const char *filename, process_dump_t *dump) {
@@ -14,24 +14,32 @@ int load_process_dump(const char *filename, process_dump_t *dump) {
     return -1;
   }
 
+  // Read the user struct
+  if (fread(&dump->user_dump, sizeof(struct user), 1, file) != 1) {
+    perror("fread user_dump");
+    fclose(file);
+    return -1;
+  }
+
   // Read the number of memory regions
-  if (fread(&dump->num_regions, sizeof(dump->num_regions), 1, file) != 1) {
+  if (fread(&dump->memory_dump.num_regions, sizeof(size_t), 1, file) != 1) {
     perror("fread num_regions");
     fclose(file);
     return -1;
   }
 
-  // Allocate memory for memory regions
-  dump->regions = malloc(dump->num_regions * sizeof(memory_region_t));
-  if (!dump->regions) {
+  // Allocate memory for the regions
+  dump->memory_dump.regions =
+      malloc(dump->memory_dump.num_regions * sizeof(memory_region_t));
+  if (!dump->memory_dump.regions) {
     perror("malloc regions");
     fclose(file);
     return -1;
   }
 
   // Read each memory region
-  for (size_t i = 0; i < dump->num_regions; i++) {
-    memory_region_t *region = &dump->regions[i];
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump->memory_dump.regions[i];
 
     // Read the memory region metadata
     if (fread(&region->start, sizeof(region->start), 1, file) != 1 ||

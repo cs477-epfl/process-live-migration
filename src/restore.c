@@ -25,6 +25,8 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  memory_dump_t *memory_dump = &dump.memory_dump;
+
   int child = fork();
   if (child == -1) {
     perror("fork");
@@ -44,7 +46,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    if (write(restorer_fd, &dump, sizeof(dump)) == -1) {
+    if (write(restorer_fd, memory_dump, sizeof(memory_dump_t)) == -1) {
       perror("write num_regions");
       return EXIT_FAILURE;
     }
