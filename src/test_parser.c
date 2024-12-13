@@ -14,19 +14,6 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  // At this point, 'dump' contains the loaded process state.
-  // You can access registers via 'dump.regs' and memory regions via
-  // 'dump.regions'. For example, to print out the memory regions:
-  printf("Registers loaded.\n");
-  // print the memory info
-  mm_info_t *mm_info = &dump.mm_info;
-  printf("start_code: 0x%lx\n", mm_info->start_code);
-  printf("end_code:   0x%lx\n", mm_info->end_code);
-  printf("start_data: 0x%lx\n", mm_info->start_data);
-  printf("end_data:   0x%lx\n", mm_info->end_data);
-  printf("start_brk:  0x%lx\n", mm_info->start_brk);
-  printf("brk:        0x%lx\n", mm_info->brk);
-  printf("start_stack: 0x%lx\n", mm_info->start_stack);
   printf("Number of memory regions: %zu\n", dump.num_regions);
   for (size_t i = 0; i < dump.num_regions; i++) {
     memory_region_t *region = &dump.regions[i];

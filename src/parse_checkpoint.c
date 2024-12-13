@@ -14,20 +14,6 @@ int load_process_dump(const char *filename, process_dump_t *dump) {
     return -1;
   }
 
-  // Read the register values
-  if (fread(&dump->regs, sizeof(dump->regs), 1, file) != 1) {
-    perror("fread regs");
-    fclose(file);
-    return -1;
-  }
-
-  // Read the mm_info
-  if (fread(&dump->mm_info, sizeof(dump->mm_info), 1, file) != 1) {
-    perror("fread mm_info");
-    fclose(file);
-    return -1;
-  }
-
   // Read the number of memory regions
   if (fread(&dump->num_regions, sizeof(dump->num_regions), 1, file) != 1) {
     perror("fread num_regions");

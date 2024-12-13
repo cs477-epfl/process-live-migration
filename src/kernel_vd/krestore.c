@@ -1,7 +1,7 @@
 #include "krestore.h"
 
 #define x86
-#define DEVICE_NAME "restore_process"
+#define DEVICE_NAME "krestore_mapping"
 #define CLASS_NAME "virtual"
 
 static int major_number;
@@ -57,36 +57,22 @@ static ssize_t device_write(struct file *filep, const char *buffer, size_t len,
     process_dump_t dump;
     int ret_parse = parse_dump_from_user(&dump, buffer, len);
     if (ret_parse != 0) {
+      printk(KERN_ALERT "/dev/krestore: Failed to parse the dump from user\n");
       return ret_parse;
     }
 
     int ret = 0;
     ret = unmap_all();
     if (ret != 0) {
+      printk(KERN_ALERT "/dev/krestore: Failed to unmap all regions\n");
       goto free_return;
     }
 
     ret = map_all(dump.regions, dump.num_regions);
     if (ret != 0) {
+      printk(KERN_ALERT "/dev/krestore: Failed to map all regions\n");
       goto free_return;
     }
-
-    // access the size of heap
-    size_t idx = 0;
-    unsigned long brk_guess = 0;
-    for (; idx < dump.num_regions; idx++) {
-      if (strcmp(dump.regions[idx].path, "[heap]") == 0) {
-        brk_guess = dump.regions[idx].end;
-        break;
-      }
-    }
-    if (brk_guess == 0) {
-      ret = -EINVAL;
-      goto free_return;
-    }
-    // assign the correct value to mm_struct, size of brk needs to be provided
-    update_mm_info(&dump.mm_info, brk_guess);
-    update_regs(&dump.regs);
 
   free_return:
     free_process_dump(&dump);
@@ -217,108 +203,17 @@ fail:
   return -1;
 }
 
-static int update_mm_info(mm_info_t *mm_info, unsigned long brk_guess) {
-  struct mm_struct *mm = current->mm;
-  mmap_write_lock(mm);
-  mm->start_code = mm_info->start_code;
-  mm->end_code = mm_info->end_code;
-  mm->start_data = mm_info->start_data;
-  mm->end_data = mm_info->end_data;
-  mm->start_brk = mm_info->start_brk;
-  mm->brk = brk_guess;
-  mm->start_stack = mm_info->start_stack;
-  mmap_write_unlock(mm);
-
-  return 0;
-}
-
-static int update_regs(struct user_regs_struct *user_regs) {
-  struct pt_regs *regs = task_pt_regs(current);
-
-  // Map and copy registers
-  regs->r15 = user_regs->r15;
-  regs->r14 = user_regs->r14;
-  regs->r13 = user_regs->r13;
-  regs->r12 = user_regs->r12;
-  regs->bp = user_regs->bp;
-  regs->bx = user_regs->bx;
-  regs->r11 = user_regs->r11;
-  regs->r10 = user_regs->r10;
-  regs->r9 = user_regs->r9;
-  regs->r8 = user_regs->r8;
-  regs->ax = user_regs->ax;
-  regs->cx = user_regs->cx;
-  regs->dx = user_regs->dx;
-  regs->si = user_regs->si;
-  regs->di = user_regs->di;
-  regs->orig_ax = user_regs->orig_ax;
-  regs->ip = user_regs->ip;
-  regs->cs = user_regs->cs; // Use csx if extended is needed
-
-  regs->flags = user_regs->flags;
-  // Preserve system flags while restoring user flags
-  // Important bits in RFLAGS:
-  // Bit 0  (CF) - Carry Flag
-  // Bit 2  (PF) - Parity Flag
-  // Bit 4  (AF) - Auxiliary Flag
-  // Bit 6  (ZF) - Zero Flag
-  // Bit 7  (SF) - Sign Flag
-  // Bit 9  (IF) - Interrupt Flag (must be set to enable interrupts)
-  // Bit 10 (DF) - Direction Flag
-  // Bit 11 (OF) - Overflow Flag
-  // Mask to preserve system bits while updating user bits
-#define USER_FLAGS_MASK 0x3F7FD5
-  regs->flags = (regs->flags & ~USER_FLAGS_MASK) |
-    (user_regs->flags & USER_FLAGS_MASK);
-
-  // Always ensure IF (Interrupt Flag) is set when returning to userspace
-  regs->flags |= X86_EFLAGS_IF;
-  regs->sp = user_regs->sp;
-  regs->ss = user_regs->ss; // Use ssx if extended is needed
-  // segment registers (optional)
-  // regs->fs_base = user_regs->fs_base;
-  // regs->gs_base = user_regs->gs_base;
-  // regs->ds = user_regs->ds;
-  // regs->es = user_regs->es;
-  // regs->fs = user_regs->fs;
-  // regs->gs = user_regs->gs;
-
-  printk(KERN_INFO "/dev/krestore: ORIGIN RAX = %lx\n", regs->orig_ax);
-
-  printk(KERN_INFO "/dev/krestore: PC addr = %lx\n", regs->ip);
-  char buffer[2];
-  if (copy_from_user(buffer, regs->ip, 2) != 0) {
-    return -EFAULT;
-  }
-  printk(KERN_INFO "/dev/krestore: ip instruction: %02x, %02x", buffer[0], buffer[1]);
-
-  const unsigned long code_start = 0x401745;
-  const unsigned long code_end = 0x40179d + 3;
-  char buf[code_end - code_start];
-
-  if (copy_from_user(buf, code_start, code_end - code_start) != 0) {
-    return -EFAULT;
-  }
-  // print the code region
-  printk(KERN_INFO "/dev/krestore: Code region in main(): ");
-  size_t i = 0;
-  for (; i < code_end - code_start; i++) {
-    printk(KERN_CONT "%02x ", buf[i]);
-  }
-  printk(KERN_CONT "\n");
-
-  return 0;
-}
-
 static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
                                 size_t len) {
   if (len != sizeof(process_dump_t)) {
+    printk(KERN_ALERT "/dev/krestore: Invalid dump size\n");
     return -EINVAL;
   }
 
-  // shallow copy of the dump struct: regs, mm_info, num_regions
+  // shallow copy of the dump struct: num_regions
   process_dump_t dump_tmp;
   if (copy_from_user(&dump_tmp, buffer, len) != 0) {
+    printk(KERN_ALERT "/dev/krestore: Failed to copy dump from user\n");
     return -EFAULT;
   }
 
@@ -329,8 +224,10 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
   if (copy_from_user(dump_tmp.regions, user_regions,
                      dump_tmp.num_regions * sizeof(memory_region_t)) != 0) {
     kfree(dump_tmp.regions);
+    printk(KERN_ALERT "/dev/krestore: Failed to copy regions from user\n");
     return -EFAULT;
   }
+
   // check the region.path exists
   size_t i = 0;
   for (; i < dump_tmp.num_regions; i++) {
@@ -371,6 +268,7 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
         }
         kfree(dump_tmp.regions[i].content);
         kfree(dump_tmp.regions);
+        printk(KERN_ALERT "/dev/krestore: Failed to copy content from user\n");
         return -EFAULT;
       }
     }

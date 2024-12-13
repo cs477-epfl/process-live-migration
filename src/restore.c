@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 int main(int argc, char **argv) {
@@ -24,20 +25,115 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  int restorer_fd = open("/dev/restore_process", O_RDWR);
-  if (restorer_fd < 0) {
-    perror("open");
+  int child = fork();
+  if (child == -1) {
+    perror("fork");
     return EXIT_FAILURE;
   }
+  if (child == 0) {
+    // Child process
+    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
+      perror("ptrace(PTRACE_TRACEME)");
+      return EXIT_FAILURE;
+    }
+    raise(SIGSTOP);
 
-  // write dump to /dev/restore_memory
-  if (write(restorer_fd, &dump, sizeof(dump)) < 0) {
-    perror("write");
-    return EXIT_FAILURE;
+    int restorer_fd = open("/dev/krestore_mapping", O_WRONLY);
+    if (restorer_fd == -1) {
+      perror("open restorer_fd");
+      return EXIT_FAILURE;
+    }
+
+    if (write(restorer_fd, &dump, sizeof(dump)) == -1) {
+      perror("write num_regions");
+      return EXIT_FAILURE;
+    }
+
+    // should not reach here
+    assert(0);
+  } else {
+    // Parent process
+
+    int status;
+    if (waitpid(child, &status, 0) == -1) {
+      perror("waitpid");
+      return EXIT_FAILURE;
+    }
+    printf("Child stopped\n");
+
+    while (1) {
+      // inspect syscall
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, NULL, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+
+      // get the syscall number
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
+        perror("ptrace(PTRACE_GETREGS)");
+        return EXIT_FAILURE;
+      }
+      long syscall = regs.orig_rax;
+      printf("syscall: %ld\n", syscall);
+
+      // check if the syscall is exit
+      if (syscall == 60) {
+        break;
+      }
+
+      // continue the process
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, NULL, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+      // read syscall and return value
+      if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
+        perror("ptrace(PTRACE_GETREGS)");
+        return EXIT_FAILURE;
+      }
+      syscall = regs.orig_rax;
+      int ret = regs.rax;
+      printf("syscall exit: %ld, ret = %d\n", syscall, ret);
+
+      if (syscall == 1) {
+        // write syscall returns from the kernel module
+
+        // TODO: poke user and poke registers to child process
+        break;
+      }
+    }
+
+    // print memory mappings of child process
+    char maps_path[256];
+    snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", child);
+    FILE *maps_file = fopen(maps_path, "r");
+    if (!maps_file) {
+      perror("fopen maps");
+      return -1;
+    }
+    while (!feof(maps_file)) {
+      char line[256];
+      if (fgets(line, sizeof(line), maps_file)) {
+        printf("%s", line);
+      }
+    }
+    fclose(maps_file);
+
+    // TODO: not kill the child process
+    if (kill(child, SIGKILL) == -1) {
+      perror("kill");
+      return EXIT_FAILURE;
+    }
   }
-
-  close(restorer_fd);
-  printf("dump written to /dev/restore_process\n");
 
   return EXIT_SUCCESS;
 }
