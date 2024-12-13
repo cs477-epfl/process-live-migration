@@ -9,5 +9,7 @@ int main() {
   unsigned long long int counter = 0;
   while (1) {
     counter++;
+    sleep(1);
+    printf("count: %lu \n", counter);
   }
 }
