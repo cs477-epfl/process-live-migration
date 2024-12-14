@@ -1,4 +1,4 @@
-#include "../include/parse_checkpoint.h"
+#include "parse_checkpoint.h"
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {

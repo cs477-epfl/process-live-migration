@@ -2,13 +2,14 @@ DEBUG ?= true
 
 CC = gcc
 CFLAGS = -std=c11
+MUSL = /usr/local/musl/bin/musl-gcc
 ifeq ($(DEBUG), true)
-	CFLAGS += -Wall -Wextra -Wfatal-errors -g -Og
+	CFLAGS += -Wall -Wextra -Wfatal-errors -g -Og -std=gnu11
 else
-	CFLAGS += -O3
+	CFLAGS += -O3 -std=gnu11
 endif
 CFLAGS += -c
-WORKLOADCFLAGS = -static -no-pie -fno-pic
+WORKLOADCFLAGS = -static -no-pie -fno-pie -fno-pic -fno-plt -fcf-protection=none
 
 INCLUDEDIR = include
 BUILDDIR = build
@@ -19,10 +20,10 @@ WORKLOADS = $(BUILDDIR)/count
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(BUILDDIR)/test_parser $(WORKLOADS)
 
 $(BUILDDIR)/count: $(BUILDDIR)/count.o
-	$(CC) $(WORKLOADCFLAGS) $^ -o $@
+	$(MUSL) $(WORKLOADCFLAGS) $^ -o $@
 
 $(BUILDDIR)/count.o: $(SRCDIR)/count.c
-	$(CC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
+	$(MUSL) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@
@@ -52,5 +53,6 @@ clean:
 	rm -rf $(BUILDDIR)
 	mkdir $(BUILDDIR)
 	rm -f *.bin
+	rm -rf *.log
 
 .PHONY: all clean

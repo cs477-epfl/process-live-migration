@@ -30,14 +30,18 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  // read user info
-  if (read_user_info(target_pid, &dump.user_dump) == -1) {
+  // get user registers
+  if (ptrace(PTRACE_GETREGS, target_pid, NULL, &dump.user_dump.regs) == -1) {
+    perror("ptrace(PTRACE_GETREGS)");
     detach_process(target_pid);
     free_process_dump(&dump);
     return EXIT_FAILURE;
   }
 
-  if (detach_process(target_pid) == -1) {
+  // kill the pid
+  if (kill(target_pid, SIGKILL) == -1) {
+    perror("kill");
+    detach_process(target_pid);
     free_process_dump(&dump);
     return EXIT_FAILURE;
   }
