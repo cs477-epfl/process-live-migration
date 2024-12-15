@@ -96,6 +96,16 @@ static int unmap_all(void) {
       continue;
     }
 
+    // only keep a special rw anonymous mapping (essential for continued
+    // execution after return to user space and restore the registers)
+    if (vma->vm_flags & VM_READ && vma->vm_flags & VM_WRITE &&
+        vma->vm_file == NULL && vma->vm_start > 0x7f0000000000 &&
+        vma->vm_end < 0x7ff000000000 &&
+        (vma->vm_end - vma->vm_start) > 0xd000) {
+      vma = next_vma;
+      continue;
+    }
+
     ret = vm_munmap(vma->vm_start, vma->vm_end - vma->vm_start);
     if (ret != 0) {
       break;

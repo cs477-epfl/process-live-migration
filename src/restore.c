@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -15,16 +16,16 @@
 
 void inspect_step_by_step(pid_t pid) {
   while (1) {
-    // // wait for user input
-    // char ch = getchar();
-    // if (ch == 'q') {
-    //   // continue the child process
-    //   if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
-    //     perror("ptrace(PTRACE_CONT)");
-    //     return;
-    //   }
-    //   break;
-    // }
+    // wait for user input
+    char ch = getchar();
+    if (ch == 'q') {
+      // continue the child process
+      if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_CONT)");
+        return;
+      }
+      break;
+    }
 
     struct user_regs_struct regs;
     if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1) {
@@ -55,13 +56,13 @@ void inspect_step_by_step(pid_t pid) {
     unsigned long rsp = regs.rsp;
 
     // print all registers
-    // printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:"
-    //        "%lx, R11: "
-    //        "%lx, R10: %lx, R9: %lx, R8: %lx, RAX: %lx, RCX: %lx, RDX: %lx, "
-    //        "RSI: %lx, RDI: %lx, ORIG_RAX: %lx, CS: %lx, EFLAGS: %lx, "
-    //        "RSP: %lx\n",
-    //        rip, r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx,
-    //        rdx, rsi, rdi, orig_rax, cs, eflags, rsp);
+    printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:"
+           "%lx, R11: "
+           "%lx, R10: %lx, R9: %lx, R8: %lx, RAX: %lx, RCX: %lx, RDX: %lx, "
+           "RSI: %lx, RDI: %lx, ORIG_RAX: %lx, CS: %lx, EFLAGS: %lx, "
+           "RSP: %lx\n",
+           rip, r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx, rdx,
+           rsi, rdi, orig_rax, cs, eflags, rsp);
 
     if (ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL) == -1) {
       perror("ptrace(PTRACE_SINGLESTEP)");
@@ -172,7 +173,7 @@ int main(int argc, char **argv) {
 
   memory_dump_t *memory_dump = &dump.memory_dump;
   struct user *user_dump = &dump.user_dump;
-  struct user_regs_struct *regs = &user_dump->regs;
+  struct user_regs_struct *regs_dump = &user_dump->regs;
 
   int child = fork();
   if (child == -1) {
@@ -181,20 +182,24 @@ int main(int argc, char **argv) {
   }
   if (child == 0) {
     // Child process
-    if (update_mappings(memory_dump, memory_dump->num_regions) == -1) {
-      return EXIT_FAILURE;
-    }
-
     if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
       perror("ptrace(PTRACE_TRACEME)");
       return EXIT_FAILURE;
     }
     raise(SIGSTOP);
 
-    while (1) {
-      printf("Child running\n");
-      sleep(1);
+    int restorer_fd = open("/dev/krestore_mapping", O_WRONLY);
+    if (restorer_fd == -1) {
+      perror("open restorer_fd");
+      return EXIT_FAILURE;
     }
+
+    if (write(restorer_fd, memory_dump, sizeof(*memory_dump)) == -1) {
+      perror("write memory_dump");
+      return EXIT_FAILURE;
+    }
+
+    assert(0); // should not reach here
 
   } else {
     // Parent process
@@ -213,10 +218,42 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
+    while (1) {
+      // inspect syscall entry
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, &status, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+
+      // inspect syscall exit
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, &status, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
+        perror("ptrace(PTRACE_GETREGS)");
+        return EXIT_FAILURE;
+      }
+      unsigned long orig_rax = regs.orig_rax;
+      if (orig_rax == SYS_write) {
+        break;
+      }
+    }
+
     print_mappings(child);
 
     // restore user registers
-    if (ptrace(PTRACE_SETREGS, child, NULL, regs) == -1) {
+    if (ptrace(PTRACE_SETREGS, child, NULL, regs_dump) == -1) {
       perror("ptrace(PTRACE_SETREGS)");
       return EXIT_FAILURE;
     }
