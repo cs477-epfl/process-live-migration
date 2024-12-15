@@ -10,7 +10,7 @@ endif
 CFLAGS += -c
 
 WORKLOADCC = /usr/local/musl/bin/musl-gcc
-WORKLOADCFLAGS = 
+WORKLOADCFLAGS = -static
 
 INCLUDEDIR = include
 BUILDDIR = build
