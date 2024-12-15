@@ -10,26 +10,27 @@ endif
 CFLAGS += -c
 
 WORKLOADCC = /usr/local/musl/bin/musl-gcc
-WORKLOADCFLAGS = -static -no-pie -fno-pie -fno-pic -fno-plt -fcf-protection=none
+WORKLOADCFLAGS = 
 
 INCLUDEDIR = include
 BUILDDIR = build
 SRCDIR = src
+WORKLOADDIR = src/workload
 
-WORKLOADS = $(BUILDDIR)/count_iterative $(BUILDDIR)/count_recursive
+WORKLOADS = $(BUILDDIR)/count_iter $(BUILDDIR)/count_recur
 
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(BUILDDIR)/test_parser $(WORKLOADS)
 
-$(BUILDDIR)/count_iterative: $(BUILDDIR)/count_iterative.o
+$(BUILDDIR)/count_iter: $(BUILDDIR)/count_iter.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
-$(BUILDDIR)/count_iterative.o: $(SRCDIR)/count_iterative.c
+$(BUILDDIR)/count_iter.o: $(WORKLOADDIR)/count_iter.c
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
-$(BUILDDIR)/count_recursive: $(BUILDDIR)/count_recursive.o
+$(BUILDDIR)/count_recur: $(BUILDDIR)/count_recur.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
-$(BUILDDIR)/count_recursive.o: $(SRCDIR)/count_recursive.c
+$(BUILDDIR)/count_recur.o: $(WORKLOADDIR)/count_recur.c
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
