@@ -55,8 +55,7 @@ void inspect_step_by_step(pid_t pid) {
     unsigned long rsp = regs.rsp;
 
     // print all registers
-    // printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:
-    // "
+    // printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:"
     //        "%lx, R11: "
     //        "%lx, R10: %lx, R9: %lx, R8: %lx, RAX: %lx, RCX: %lx, RDX: %lx, "
     //        "RSI: %lx, RDI: %lx, ORIG_RAX: %lx, CS: %lx, EFLAGS: %lx, "
@@ -222,7 +221,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    inspect_step_by_step(child);
+    // inspect_step_by_step(child);
 
     detach_process(child);
 

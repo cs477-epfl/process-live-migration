@@ -2,28 +2,35 @@ DEBUG ?= true
 
 CC = gcc
 CFLAGS = -std=c11
-MUSL = /usr/local/musl/bin/musl-gcc
 ifeq ($(DEBUG), true)
 	CFLAGS += -Wall -Wextra -Wfatal-errors -g -Og -std=gnu11
 else
 	CFLAGS += -O3 -std=gnu11
 endif
 CFLAGS += -c
+
+WORKLOADCC = /usr/local/musl/bin/musl-gcc
 WORKLOADCFLAGS = -static -no-pie -fno-pie -fno-pic -fno-plt -fcf-protection=none
 
 INCLUDEDIR = include
 BUILDDIR = build
 SRCDIR = src
 
-WORKLOADS = $(BUILDDIR)/count
+WORKLOADS = $(BUILDDIR)/count_iterative $(BUILDDIR)/count_recursive
 
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(BUILDDIR)/test_parser $(WORKLOADS)
 
-$(BUILDDIR)/count: $(BUILDDIR)/count.o
-	$(MUSL) $(WORKLOADCFLAGS) $^ -o $@
+$(BUILDDIR)/count_iterative: $(BUILDDIR)/count_iterative.o
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
-$(BUILDDIR)/count.o: $(SRCDIR)/count.c
-	$(MUSL) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
+$(BUILDDIR)/count_iterative.o: $(SRCDIR)/count_iterative.c
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
+
+$(BUILDDIR)/count_recursive: $(BUILDDIR)/count_recursive.o
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
+
+$(BUILDDIR)/count_recursive.o: $(SRCDIR)/count_recursive.c
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@

@@ -1,5 +1,5 @@
 /*
-count.c increment a counter in a loop
+count_iterative.c increment a counter in a loop
 */
 
 #include <stdio.h>
