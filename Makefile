@@ -16,22 +16,20 @@ INCLUDEDIR = include
 BUILDDIR = build
 SRCDIR = src
 WORKLOADDIR = src/workload
+WORKLOADBUILDDIR = build/workload
 
-WORKLOADS = $(BUILDDIR)/count_iter $(BUILDDIR)/count_recur
+WORKLOADS = $(WORKLOADBUILDDIR)/count_iter $(WORKLOADBUILDDIR)/count_recur $(WORKLOADBUILDDIR)/matrix_multiplication $(WORKLOADBUILDDIR)/matrix_static
 
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(WORKLOADS)
 
-$(BUILDDIR)/count_iter: $(BUILDDIR)/count_iter.o
+# Pattern rule for building object files
+$(WORKLOADBUILDDIR)/%.o: $(WORKLOADDIR)/%.c
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) -c $< -o $@
+
+# Pattern rule for building executables
+$(WORKLOADBUILDDIR)/%: $(WORKLOADBUILDDIR)/%.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
-$(BUILDDIR)/count_iter.o: $(WORKLOADDIR)/count_iter.c
-	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
-
-$(BUILDDIR)/count_recur: $(BUILDDIR)/count_recur.o
-	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
-
-$(BUILDDIR)/count_recur.o: $(WORKLOADDIR)/count_recur.c
-	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@
@@ -51,6 +49,7 @@ $(BUILDDIR)/restore.o: $(SRCDIR)/restore.c
 clean:
 	rm -rf $(BUILDDIR)
 	mkdir $(BUILDDIR)
+	mkdir $(WORKLOADBUILDDIR)
 	rm -f *.bin
 	rm -rf *.log
 
