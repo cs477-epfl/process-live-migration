@@ -18,7 +18,7 @@ SRCDIR = src
 WORKLOADDIR = src/workload
 WORKLOADBUILDDIR = build/workload
 
-WORKLOADS = $(WORKLOADBUILDDIR)/count_iter $(WORKLOADBUILDDIR)/count_recur $(WORKLOADBUILDDIR)/matrix_multiplication $(WORKLOADBUILDDIR)/matrix_static
+WORKLOADS = $(WORKLOADBUILDDIR)/count_iter $(WORKLOADBUILDDIR)/count_recur $(WORKLOADBUILDDIR)/matrix_malloc $(WORKLOADBUILDDIR)/matrix_static $(WORKLOADBUILDDIR)/kv
 
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(WORKLOADS)
 
@@ -30,6 +30,12 @@ $(WORKLOADBUILDDIR)/%.o: $(WORKLOADDIR)/%.c
 $(WORKLOADBUILDDIR)/%: $(WORKLOADBUILDDIR)/%.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
+
+$(BUILDDIR)/kv: $(BUILDDIR)/kv.o
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
+
+$(BUILDDIR)/kv.o: $(WORKLOADDIR)/kv.c
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@

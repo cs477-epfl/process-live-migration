@@ -96,6 +96,14 @@ static int unmap_all(void) {
       continue;
     }
 
+    // only keep a special rw anonymous mapping (essential for continued
+    // execution after return to user space and restore the registers)
+    if (vma->vm_flags & VM_READ && vma->vm_flags & VM_WRITE &&
+        vma->vm_file == NULL && vma->vm_start > 0x7f0000000000) {
+      vma = next_vma;
+      continue;
+    }
+
     ret = vm_munmap(vma->vm_start, vma->vm_end - vma->vm_start);
     if (ret != 0) {
       break;
@@ -257,6 +265,7 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
           kfree(dump_tmp.regions[j].content);
         }
         kfree(dump_tmp.regions);
+        printk(KERN_ALERT "/dev/krestore: Failed to allocate content\n");
         return -ENOMEM;
       }
 
@@ -272,6 +281,7 @@ static int parse_dump_from_user(process_dump_t *dump, const char *buffer,
         return -EFAULT;
       }
     }
+    printk(KERN_INFO "/dev/krestore: Copied region %zu\n", i);
   }
 
   *dump = dump_tmp; // copy back to the original dump

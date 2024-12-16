@@ -3,7 +3,7 @@
 #include <time.h>
 #include <stdint.h>
 
-#define MATRIX_SIZE 1000     // Define a large matrix size
+#define MATRIX_SIZE 10     // Define a large matrix size
 #define MODULO 1000          // Define the modulo value to keep elements within [0, MODULO - 1]
 
 // Function to initialize a matrix with random values

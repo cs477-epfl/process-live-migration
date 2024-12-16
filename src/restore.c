@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -167,70 +168,6 @@ static void print_mappings(pid_t pid) {
   fclose(maps_file);
 }
 
-static unsigned long parse_permissions(const char *permissions) {
-  unsigned long ret = 0;
-  if (permissions[0] == 'r') {
-    ret |= PROT_READ;
-  }
-  if (permissions[1] == 'w') {
-    ret |= PROT_WRITE;
-  }
-  if (permissions[2] == 'x') {
-    ret |= PROT_EXEC;
-  }
-  return ret;
-}
-
-int update_mappings(const memory_dump_t *memory_dump, size_t num_regions) {
-  for (size_t i = 0; i < num_regions; i++) {
-    const memory_region_t *region = &memory_dump->regions[i];
-    unsigned long start = region->start;
-    unsigned long size = region->size;
-    unsigned long offset = region->offset;
-    unsigned long permissions = parse_permissions(region->permissions);
-    const char *path = region->path;
-    const char *content = region->content;
-
-    // skip kernel-related regions
-    if (strcmp(path, "[vdso]") == 0 || strcmp(path, "[vsyscall]") == 0 ||
-        strcmp(path, "[vvar]") == 0) {
-      continue;
-    }
-
-    unsigned long flags = MAP_PRIVATE | MAP_FIXED;
-    if (strcmp(path, "[stack]") == 0) {
-      flags |= MAP_GROWSDOWN;
-    }
-
-    if (strlen(path) > 0 && strstr(path, "/")) {
-      // file-backed region
-      int fd = open(path, O_RDONLY);
-      if (fd == -1) {
-        perror("open");
-        return -1;
-      }
-      void *addr = mmap((void *)start, size, permissions, flags, fd, offset);
-      if (addr == MAP_FAILED) {
-        perror("mmap file-backed");
-        return -1;
-      }
-      close(fd);
-    } else {
-      // anonymous region
-      void *addr =
-          mmap((void *)start, size, permissions, flags | MAP_ANONYMOUS, -1, 0);
-      if (addr == MAP_FAILED) {
-        perror("mmap anonymous");
-        return -1;
-      }
-      if (content) {
-        memcpy(addr, content, size);
-      }
-    }
-  }
-  return 0;
-}
-
 int main(int argc, char **argv) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <listen port>\n", argv[0]);
@@ -279,7 +216,7 @@ int main(int argc, char **argv) {
 
   memory_dump_t *memory_dump = &dump.memory_dump;
   struct user *user_dump = &dump.user_dump;
-  struct user_regs_struct *regs = &user_dump->regs;
+  struct user_regs_struct *regs_dump = &user_dump->regs;
 
   int child = fork();
   if (child == -1) {
@@ -288,15 +225,22 @@ int main(int argc, char **argv) {
   }
   if (child == 0) {
     // Child process
-    if (update_mappings(memory_dump, memory_dump->num_regions) == -1) {
-      return EXIT_FAILURE;
-    }
-
     if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
       perror("ptrace(PTRACE_TRACEME)");
       return EXIT_FAILURE;
     }
     raise(SIGSTOP);
+
+    int restorer_fd = open("/dev/krestore_mapping", O_WRONLY);
+    if (restorer_fd == -1) {
+      perror("open restorer_fd");
+      return EXIT_FAILURE;
+    }
+
+    if (write(restorer_fd, memory_dump, sizeof(*memory_dump)) == -1) {
+      perror("write memory_dump");
+      return EXIT_FAILURE;
+    }
 
     assert(0); // should not reach here
 
@@ -317,10 +261,42 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
+    while (1) {
+      // inspect syscall entry
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, &status, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+
+      // inspect syscall exit
+      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_SYSCALL)");
+        return EXIT_FAILURE;
+      }
+      if (waitpid(child, &status, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+      }
+
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
+        perror("ptrace(PTRACE_GETREGS)");
+        return EXIT_FAILURE;
+      }
+      unsigned long orig_rax = regs.orig_rax;
+      if (orig_rax == SYS_write) {
+        break;
+      }
+    }
+
     print_mappings(child);
 
     // restore user registers
-    if (ptrace(PTRACE_SETREGS, child, NULL, regs) == -1) {
+    if (ptrace(PTRACE_SETREGS, child, NULL, regs_dump) == -1) {
       perror("ptrace(PTRACE_SETREGS)");
       return EXIT_FAILURE;
     }
@@ -328,8 +304,6 @@ int main(int argc, char **argv) {
     // inspect_step_by_step(child);
 
     detach_process(child);
-
-    waitpid(child, NULL, NULL);
   }
 
   return EXIT_SUCCESS;

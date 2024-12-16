@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-#define MATRIX_SIZE 1000      // Define a large matrix size
+#define MATRIX_SIZE 10      // Define a large matrix size
 #define BITMASK 0xFFFFFFFF        // 16-bit mask to limit elements to 16 bits (0 to 65535)
 
 // Function to allocate a matrix
