@@ -1,30 +1,106 @@
 #include "checkpoint.h"
-#include "parse_checkpoint.h"
 #include "ptrace.h"
+#include <arpa/inet.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
+int recv_dump(process_dump_t *dump, int socket_fd) {
+  // Read the user struct
+  if (recv(socket_fd, &dump->user_dump, sizeof(struct user), 0) == -1) {
+    perror("recv user_dump");
+    return -1;
+  }
+
+  // Read the number of memory regions
+  if (recv(socket_fd, &dump->memory_dump.num_regions, sizeof(size_t), 0) ==
+      -1) {
+    perror("recv num_regions");
+    return -1;
+  }
+
+  // Allocate memory for the memory regions
+  dump->memory_dump.regions =
+      malloc(dump->memory_dump.num_regions * sizeof(memory_region_t));
+  if (!dump->memory_dump.regions) {
+    perror("malloc regions");
+    return -1;
+  }
+
+  // Read each memory region
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump->memory_dump.regions[i];
+
+    // Read the memory region metadata
+    if (recv(socket_fd, &region->start, sizeof(region->start), 0) == -1 ||
+        recv(socket_fd, &region->end, sizeof(region->end), 0) == -1 ||
+        recv(socket_fd, &region->size, sizeof(region->size), 0) == -1 ||
+        recv(socket_fd, &region->offset, sizeof(region->offset), 0) == -1 ||
+        recv(socket_fd, region->permissions, sizeof(region->permissions), 0) ==
+            -1 ||
+        recv(socket_fd, region->path, sizeof(region->path), 0) == -1) {
+      perror("recv region metadata");
+      return -1;
+    }
+
+    // Read the memory content
+    if (region->size > 0 &&
+        !(strlen(region->path) > 0 && strstr(region->path, "/")) &&
+        !(strstr(region->path, "[vvar]") ||
+          strstr(region->path, "[vsyscall]") ||
+          strstr(region->path, "[vdso]"))) {
+      region->content = malloc(region->size);
+      if (!region->content) {
+        perror("malloc region content");
+        return -1;
+      }
+
+      // TCP will send in multiple chunks
+      size_t received = 0;
+      while (received < region->size) {
+        ssize_t ret = recv(socket_fd, region->content + received,
+                           region->size - received, 0);
+        if (ret == -1) {
+          perror("recv region content");
+          return -1;
+        }
+        received += ret;
+      }
+
+    } else {
+      region->content = NULL;
+    }
+
+    printf("Recv Region %zu: %lx-%lx (%s) %s (offset=%lx), size: %zu\n", i,
+           region->start, region->end, region->permissions, region->path,
+           region->offset, region->size);
+  }
+
+  return 0;
+}
+
 void inspect_step_by_step(pid_t pid) {
   while (1) {
-    // // wait for user input
-    // char ch = getchar();
-    // if (ch == 'q') {
-    //   // continue the child process
-    //   if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
-    //     perror("ptrace(PTRACE_CONT)");
-    //     return;
-    //   }
-    //   break;
-    // }
+    // wait for user input
+    char ch = getchar();
+    if (ch == 'q') {
+      // continue the child process
+      if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
+        perror("ptrace(PTRACE_CONT)");
+        return;
+      }
+      break;
+    }
 
     struct user_regs_struct regs;
     if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1) {
@@ -55,13 +131,13 @@ void inspect_step_by_step(pid_t pid) {
     unsigned long rsp = regs.rsp;
 
     // print all registers
-    // printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:"
-    //        "%lx, R11: "
-    //        "%lx, R10: %lx, R9: %lx, R8: %lx, RAX: %lx, RCX: %lx, RDX: %lx, "
-    //        "RSI: %lx, RDI: %lx, ORIG_RAX: %lx, CS: %lx, EFLAGS: %lx, "
-    //        "RSP: %lx\n",
-    //        rip, r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx,
-    //        rdx, rsi, rdi, orig_rax, cs, eflags, rsp);
+    printf("RIP: %lx, R15: %lx, R14: %lx, R13: %lx, R12: %lx, RBP: %lx, RBX:"
+           "%lx, R11: "
+           "%lx, R10: %lx, R9: %lx, R8: %lx, RAX: %lx, RCX: %lx, RDX: %lx, "
+           "RSI: %lx, RDI: %lx, ORIG_RAX: %lx, CS: %lx, EFLAGS: %lx, "
+           "RSP: %lx\n",
+           rip, r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx, rdx,
+           rsi, rdi, orig_rax, cs, eflags, rsp);
 
     if (ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL) == -1) {
       perror("ptrace(PTRACE_SINGLESTEP)");
@@ -157,16 +233,47 @@ int update_mappings(const memory_dump_t *memory_dump, size_t num_regions) {
 
 int main(int argc, char **argv) {
   if (argc != 2) {
-    fprintf(stderr, "Usage: %s <dump_file>\n", argv[0]);
+    fprintf(stderr, "Usage: %s <listen port>\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   process_dump_t dump;
-
-  const char *dump_file = argv[1];
   memset(&dump, 0, sizeof(dump));
 
-  if (load_process_dump(dump_file, &dump) == -1) {
+  const char *listen_port = argv[1];
+  const char *listen_host = "127.0.0.1";
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(atoi(listen_port));
+  addr.sin_addr.s_addr = inet_addr(listen_host);
+
+  // create a listen socket at the specified port
+  int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (listen_fd == -1) {
+    perror("socket");
+    return EXIT_FAILURE;
+  }
+  if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+    perror("bind");
+    return EXIT_FAILURE;
+  }
+  if (listen(listen_fd, 1) == -1) {
+    perror("listen");
+    return EXIT_FAILURE;
+  }
+
+  // accept a connection from the client and print everything
+  struct sockaddr_in client_addr;
+  socklen_t client_addr_len = sizeof(client_addr);
+  int socket_fd =
+      accept(listen_fd, (struct sockaddr *)&client_addr, &client_addr_len);
+  if (socket_fd == -1) {
+    perror("accept");
+    return EXIT_FAILURE;
+  }
+
+  if (recv_dump(&dump, socket_fd) == -1) {
+    printf("Failed to load dump from client\n");
     return EXIT_FAILURE;
   }
 
@@ -191,10 +298,7 @@ int main(int argc, char **argv) {
     }
     raise(SIGSTOP);
 
-    while (1) {
-      printf("Child running\n");
-      sleep(1);
-    }
+    assert(0); // should not reach here
 
   } else {
     // Parent process

@@ -51,9 +51,6 @@ int read_memory_regions(pid_t pid, memory_dump_t *dump);
 
 int read_user_info(pid_t pid, struct user *user_dump);
 
-// Function to save the process dump to a file
-int save_process_dump(const char *filename, process_dump_t *dump);
-
 // Function to free the memory allocated in the dump
 void free_process_dump(process_dump_t *dump);
 

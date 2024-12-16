@@ -19,7 +19,7 @@ WORKLOADDIR = src/workload
 
 WORKLOADS = $(BUILDDIR)/count_iter $(BUILDDIR)/count_recur
 
-all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(BUILDDIR)/test_parser $(WORKLOADS)
+all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(WORKLOADS)
 
 $(BUILDDIR)/count_iter: $(BUILDDIR)/count_iter.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
@@ -36,22 +36,13 @@ $(BUILDDIR)/count_recur.o: $(WORKLOADDIR)/count_recur.c
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@
 
-$(BUILDDIR)/test_parser: $(BUILDDIR)/test_parser.o $(BUILDDIR)/parse_checkpoint.o
-	$(CC) $^ -o $@
-
-$(BUILDDIR)/test_parser.o: $(SRCDIR)/test_parser.c
-	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
-
 $(BUILDDIR)/checkpoint.o: $(SRCDIR)/checkpoint.c
 	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/ptrace.o: $(SRCDIR)/ptrace.c
 	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
 
-$(BUILDDIR)/parse_checkpoint.o: $(SRCDIR)/parse_checkpoint.c
-	$(CC) -I$(INCLUDEDIR) $(CFLAGS) $^ -o $@
-
-$(BUILDDIR)/restore: $(BUILDDIR)/restore.o $(BUILDDIR)/ptrace.o $(BUILDDIR)/parse_checkpoint.o
+$(BUILDDIR)/restore: $(BUILDDIR)/restore.o $(BUILDDIR)/ptrace.o
 	$(CC) $^ -o $@
 
 $(BUILDDIR)/restore.o: $(SRCDIR)/restore.c

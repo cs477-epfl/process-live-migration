@@ -1,18 +1,93 @@
 #include "checkpoint.h"
 #include "ptrace.h"
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <sys/socket.h>
+
+int send_dump(process_dump_t *dump, int socket_fd) {
+  // Send the user struct
+  if (send(socket_fd, &dump->user_dump, sizeof(struct user), 0) == -1) {
+    perror("send user_dump");
+    return -1;
+  }
+
+  // Send the number of memory regions
+  if (send(socket_fd, &dump->memory_dump.num_regions, sizeof(size_t), 0) ==
+      -1) {
+    perror("send num_regions");
+    return -1;
+  }
+
+  // Send each memory region
+  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
+    memory_region_t *region = &dump->memory_dump.regions[i];
+
+    // Send the memory region metadata
+    if (send(socket_fd, &region->start, sizeof(region->start), 0) == -1 ||
+        send(socket_fd, &region->end, sizeof(region->end), 0) == -1 ||
+        send(socket_fd, &region->size, sizeof(region->size), 0) == -1 ||
+        send(socket_fd, &region->offset, sizeof(region->offset), 0) == -1 ||
+        send(socket_fd, region->permissions, sizeof(region->permissions), 0) ==
+            -1 ||
+        send(socket_fd, region->path, sizeof(region->path), 0) == -1) {
+      perror("send region metadata");
+      return -1;
+    }
+
+    // Send the memory content
+    if (region->size > 0 && region->content) {
+      if (send(socket_fd, region->content, region->size, 0) == -1) {
+        perror("send region content");
+        return -1;
+      }
+    }
+
+    printf("Sent Region %zu: %lx-%lx (%s) %s (offset=%lx), size: %zu\n", i,
+           region->start, region->end, region->permissions, region->path,
+           region->offset, region->size);
+  }
+
+  return 0;
+}
 
 int main(int argc, char *argv[]) {
+  int ret = 0;
   if (argc != 3) {
-    fprintf(stderr, "Usage: %s <pid> <output_file>\n", argv[0]);
+    fprintf(stderr, "Usage: %s <pid> <ip:port>\n", argv[0]);
     return EXIT_FAILURE;
   }
 
-  pid_t target_pid = atoi(argv[1]);
-  const char *output_file = argv[2];
-
   // Check if the target process exists
+  pid_t target_pid = atoi(argv[1]);
   if (kill(target_pid, 0) == -1 && errno != EPERM) {
     perror("kill");
+    return EXIT_FAILURE;
+  }
+
+  // parse ip and port to socket address
+  char *send_socket = argv[2];
+  const char *ip = strtok(send_socket, ":");
+  const char *port = strtok(NULL, ":");
+  if (ip == NULL || port == NULL) {
+    fprintf(stderr, "Invalid ip:port\n");
+    return EXIT_FAILURE;
+  }
+  struct sockaddr_in server_addr;
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(atoi(port));
+  server_addr.sin_addr.s_addr = inet_addr(ip);
+  if (inet_pton(AF_INET, ip, &server_addr.sin_addr) != 1) {
+    perror("inet_pton");
+    return EXIT_FAILURE;
+  }
+  int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (socket_fd == -1) {
+    perror("socket");
+    return EXIT_FAILURE;
+  }
+  if (connect(socket_fd, (struct sockaddr *)&server_addr,
+              sizeof(server_addr)) == -1) {
+    perror("connect");
     return EXIT_FAILURE;
   }
 
@@ -25,37 +100,33 @@ int main(int argc, char *argv[]) {
 
   // Read memory regions
   if (read_memory_regions(target_pid, &dump.memory_dump) == -1) {
-    detach_process(target_pid);
-    free_process_dump(&dump);
-    return EXIT_FAILURE;
+    ret = -1;
+    goto ret;
   }
 
   // get user registers
   if (ptrace(PTRACE_GETREGS, target_pid, NULL, &dump.user_dump.regs) == -1) {
     perror("ptrace(PTRACE_GETREGS)");
-    detach_process(target_pid);
-    free_process_dump(&dump);
-    return EXIT_FAILURE;
+    ret = -1;
+    goto ret;
+  }
+
+  // Send the dump to the server
+  if (send_dump(&dump, socket_fd) == -1) {
+    ret = -1;
+    goto ret;
   }
 
   // kill the pid
   if (kill(target_pid, SIGKILL) == -1) {
     perror("kill");
-    detach_process(target_pid);
-    free_process_dump(&dump);
-    return EXIT_FAILURE;
+    ret = -1;
+    goto ret;
   }
 
-  // Save the dump to a file
-  if (save_process_dump(output_file, &dump) == -1) {
-    free_process_dump(&dump);
-    return EXIT_FAILURE;
-  }
-
-  // Free allocated memory
+ret:
   free_process_dump(&dump);
-
-  return EXIT_SUCCESS;
+  return ret;
 }
 
 bool should_save_region(const memory_region_t *region) {
@@ -130,13 +201,7 @@ int read_memory_region(const char *line, memory_region_t *region,
         return -1;
       }
     }
-    printf("%lx-%lx %s %s (offset: %lx) size: %zu\n", region->start,
-           region->end, region->permissions, region->path, region->offset,
-           region->size);
-  } else {
-    printf("skip content: %s\n", line);
   }
-
   return 0;
 }
 
@@ -208,60 +273,6 @@ int read_user_info(pid_t pid, struct user *user_dump) {
     // Copy the data into the user_data struct
     ((long *)user_dump)[i] = data;
   }
-  return 0;
-}
-
-int save_process_dump(const char *filename, process_dump_t *dump) {
-  FILE *file = fopen(filename, "wb");
-  if (!file) {
-    perror("fopen dump file");
-    return -1;
-  }
-
-  // Write the user struct
-  if (fwrite(&dump->user_dump, sizeof(struct user), 1, file) != 1) {
-    perror("fwrite user_dump");
-    fclose(file);
-    return -1;
-  }
-
-  // Write the number of memory regions
-  if (fwrite(&dump->memory_dump.num_regions, sizeof(size_t), 1, file) != 1) {
-    perror("fwrite num_regions");
-    fclose(file);
-    return -1;
-  }
-
-  // Write each memory region
-  for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
-    memory_region_t *region = &dump->memory_dump.regions[i];
-
-    // Write the memory region metadata
-    if (fwrite(&region->start, sizeof(region->start), 1, file) != 1 ||
-        fwrite(&region->end, sizeof(region->end), 1, file) != 1 ||
-        fwrite(&region->size, sizeof(region->size), 1, file) != 1 ||
-        fwrite(&region->offset, sizeof(region->offset), 1, file) != 1 ||
-        fwrite(region->permissions, sizeof(region->permissions), 1, file) !=
-            1 ||
-        fwrite(region->path, sizeof(region->path), 1, file) != 1) {
-      perror("fwrite region metadata");
-      fclose(file);
-      return -1;
-    }
-
-    // Write the memory content
-    if (region->size == 0 || region->content == NULL) {
-      continue;
-    }
-    if (fwrite(region->content, 1, region->size, file) != region->size) {
-      perror("fwrite region content");
-      fclose(file);
-      return -1;
-    }
-  }
-
-  fclose(file);
-  printf("Process dump saved to %s\n", filename);
   return 0;
 }
 
