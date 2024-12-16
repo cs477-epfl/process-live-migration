@@ -16,6 +16,13 @@
 #include <time.h>
 #include <unistd.h>
 
+static long long get_time_ms() {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  long long current_time = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  return current_time;
+}
+
 int recv_dump(process_dump_t *dump, int socket_fd) {
   // Read the user struct
   if (recv(socket_fd, &dump->user_dump, sizeof(struct user), 0) == -1) {
@@ -168,16 +175,132 @@ static void print_mappings(pid_t pid) {
   fclose(maps_file);
 }
 
-int main(int argc, char **argv) {
-  if (argc != 2) {
-    fprintf(stderr, "Usage: %s <listen port>\n", argv[0]);
+int tracer(pid_t child, bool step_by_step,
+           const struct user_regs_struct *regs_dump) {
+  int status;
+  if (waitpid(child, &status, 0) == -1) {
+    perror("waitpid");
     return EXIT_FAILURE;
+  }
+  if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP) {
+    printf("Child stopped by SIGSTOP\n");
+  } else if (WIFEXITED(status)) {
+    printf("Child exited with status %d\n", WEXITSTATUS(status));
+    return EXIT_FAILURE;
+  } else {
+    fprintf(stderr, "Child stopped by signal %d\n", WSTOPSIG(status));
+    return EXIT_FAILURE;
+  }
+
+  while (1) {
+    // inspect syscall entry
+    if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+      perror("ptrace(PTRACE_SYSCALL)");
+      return EXIT_FAILURE;
+    }
+    if (waitpid(child, &status, 0) == -1) {
+      perror("waitpid");
+      return EXIT_FAILURE;
+    }
+
+    // inspect syscall exit
+    if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+      perror("ptrace(PTRACE_SYSCALL)");
+      return EXIT_FAILURE;
+    }
+    if (waitpid(child, &status, 0) == -1) {
+      perror("waitpid");
+      return EXIT_FAILURE;
+    }
+
+    struct user_regs_struct regs;
+    if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
+      perror("ptrace(PTRACE_GETREGS)");
+      return EXIT_FAILURE;
+    }
+    unsigned long orig_rax = regs.orig_rax;
+    if (orig_rax == SYS_write) {
+      break;
+    }
+  }
+
+  print_mappings(child);
+
+  // restore user registers
+  if (ptrace(PTRACE_SETREGS, child, NULL, regs_dump) == -1) {
+    perror("ptrace(PTRACE_SETREGS)");
+    return EXIT_FAILURE;
+  }
+
+  if (step_by_step) {
+    inspect_step_by_step(child);
+  }
+
+  detach_process(child);
+
+  long long end_time = get_time_ms();
+  printf("migration end time: %lld ms\n", end_time);
+  return EXIT_SUCCESS;
+}
+
+int tracee(const memory_dump_t *memory_dump) {
+  if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
+    perror("ptrace(PTRACE_TRACEME)");
+    return EXIT_FAILURE;
+  }
+  raise(SIGSTOP);
+
+  int restorer_fd = open("/dev/krestore_mapping", O_WRONLY);
+  if (restorer_fd == -1) {
+    perror("open restorer_fd");
+    return EXIT_FAILURE;
+  }
+
+  if (write(restorer_fd, memory_dump, sizeof(*memory_dump)) == -1) {
+    perror("write memory_dump");
+    return EXIT_FAILURE;
+  }
+
+  assert(0); // should not reach here
+}
+
+int main(int argc, char **argv) {
+  // Usage: ./restore <listen port> [-f <file path>] [-s]
+  int opt;
+  char *log_filename = NULL;
+  int log_fd = -1;
+  bool step_by_step = false;
+  if (argc < 2) {
+    fprintf(stderr, "Usage: %s <listen port> [-f <file path>] [-s]\n", argv[0]);
+    return EXIT_FAILURE;
+  }
+  const char *listen_port = argv[1];
+  while (opt = getopt(argc, argv, "f:s"), opt != -1) {
+    switch (opt) {
+    case 'f':
+      log_filename = optarg;
+      break;
+    case 's':
+      step_by_step = true;
+      break;
+    default:
+      fprintf(stderr, "Usage: %s <listen port> [-f <file path>] [-s]\n",
+              argv[0]);
+      return EXIT_FAILURE;
+    }
+  }
+
+  if (log_filename) {
+    log_fd = open(log_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (log_fd == -1) {
+      perror("open log file");
+      return EXIT_FAILURE;
+    }
   }
 
   process_dump_t dump;
   memset(&dump, 0, sizeof(dump));
 
-  const char *listen_port = argv[1];
   const char *listen_host = "127.0.0.1";
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
@@ -198,6 +321,7 @@ int main(int argc, char **argv) {
     perror("listen");
     return EXIT_FAILURE;
   }
+  printf("Listening on %s:%s\n", listen_host, listen_port);
 
   // accept a connection from the client and print everything
   struct sockaddr_in client_addr;
@@ -224,86 +348,20 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   if (child == 0) {
-    // Child process
-    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
-      perror("ptrace(PTRACE_TRACEME)");
+    int ret = tracee(memory_dump);
+    if (ret == EXIT_FAILURE) {
       return EXIT_FAILURE;
     }
-    raise(SIGSTOP);
-
-    int restorer_fd = open("/dev/krestore_mapping", O_WRONLY);
-    if (restorer_fd == -1) {
-      perror("open restorer_fd");
-      return EXIT_FAILURE;
-    }
-
-    if (write(restorer_fd, memory_dump, sizeof(*memory_dump)) == -1) {
-      perror("write memory_dump");
-      return EXIT_FAILURE;
-    }
-
-    assert(0); // should not reach here
-
   } else {
-    // Parent process
-    int status;
-    if (waitpid(child, &status, 0) == -1) {
-      perror("waitpid");
-      return EXIT_FAILURE;
-    }
-    if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP) {
-      printf("Child stopped by SIGSTOP\n");
-    } else if (WIFEXITED(status)) {
-      printf("Child exited with status %d\n", WEXITSTATUS(status));
-      return EXIT_FAILURE;
-    } else {
-      fprintf(stderr, "Child stopped by signal %d\n", WSTOPSIG(status));
-      return EXIT_FAILURE;
+    // make log_fd the standard output
+    if (log_fd != -1) {
+      dup2(log_fd, STDOUT_FILENO);
     }
 
-    while (1) {
-      // inspect syscall entry
-      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
-        perror("ptrace(PTRACE_SYSCALL)");
-        return EXIT_FAILURE;
-      }
-      if (waitpid(child, &status, 0) == -1) {
-        perror("waitpid");
-        return EXIT_FAILURE;
-      }
-
-      // inspect syscall exit
-      if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
-        perror("ptrace(PTRACE_SYSCALL)");
-        return EXIT_FAILURE;
-      }
-      if (waitpid(child, &status, 0) == -1) {
-        perror("waitpid");
-        return EXIT_FAILURE;
-      }
-
-      struct user_regs_struct regs;
-      if (ptrace(PTRACE_GETREGS, child, NULL, &regs) == -1) {
-        perror("ptrace(PTRACE_GETREGS)");
-        return EXIT_FAILURE;
-      }
-      unsigned long orig_rax = regs.orig_rax;
-      if (orig_rax == SYS_write) {
-        break;
-      }
-    }
-
-    print_mappings(child);
-
-    // restore user registers
-    if (ptrace(PTRACE_SETREGS, child, NULL, regs_dump) == -1) {
-      perror("ptrace(PTRACE_SETREGS)");
+    int ret = tracer(child, step_by_step, regs_dump);
+    if (ret == EXIT_FAILURE) {
       return EXIT_FAILURE;
     }
-
-    // inspect_step_by_step(child);
-
-    detach_process(child);
   }
 
   return EXIT_SUCCESS;

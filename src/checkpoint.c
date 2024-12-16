@@ -4,12 +4,21 @@
 #include <stdio.h>
 #include <sys/socket.h>
 
+static long long get_time_ms() {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  long long current_time = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  return current_time;
+}
+
 int send_dump(process_dump_t *dump, int socket_fd) {
+  size_t total_send_bytes = 0;
   // Send the user struct
   if (send(socket_fd, &dump->user_dump, sizeof(struct user), 0) == -1) {
     perror("send user_dump");
     return -1;
   }
+  total_send_bytes += sizeof(struct user);
 
   // Send the number of memory regions
   if (send(socket_fd, &dump->memory_dump.num_regions, sizeof(size_t), 0) ==
@@ -17,6 +26,7 @@ int send_dump(process_dump_t *dump, int socket_fd) {
     perror("send num_regions");
     return -1;
   }
+  total_send_bytes += sizeof(size_t);
 
   // Send each memory region
   for (size_t i = 0; i < dump->memory_dump.num_regions; i++) {
@@ -33,6 +43,9 @@ int send_dump(process_dump_t *dump, int socket_fd) {
       perror("send region metadata");
       return -1;
     }
+    total_send_bytes += sizeof(region->start) + sizeof(region->end) +
+                        sizeof(region->size) + sizeof(region->offset) +
+                        sizeof(region->permissions) + sizeof(region->path);
 
     // Send the memory content
     if (region->size > 0 && region->content) {
@@ -40,93 +53,13 @@ int send_dump(process_dump_t *dump, int socket_fd) {
         perror("send region content");
         return -1;
       }
+      total_send_bytes += region->size;
     }
-
-    printf("Sent Region %zu: %lx-%lx (%s) %s (offset=%lx), size: %zu\n", i,
-           region->start, region->end, region->permissions, region->path,
-           region->offset, region->size);
   }
+
+  printf("Dump sent: %zu bytes\n", total_send_bytes);
 
   return 0;
-}
-
-int main(int argc, char *argv[]) {
-  int ret = 0;
-  if (argc != 3) {
-    fprintf(stderr, "Usage: %s <pid> <ip:port>\n", argv[0]);
-    return EXIT_FAILURE;
-  }
-
-  // Check if the target process exists
-  pid_t target_pid = atoi(argv[1]);
-  if (kill(target_pid, 0) == -1 && errno != EPERM) {
-    perror("kill");
-    return EXIT_FAILURE;
-  }
-
-  // parse ip and port to socket address
-  char *send_socket = argv[2];
-  const char *ip = strtok(send_socket, ":");
-  const char *port = strtok(NULL, ":");
-  if (ip == NULL || port == NULL) {
-    fprintf(stderr, "Invalid ip:port\n");
-    return EXIT_FAILURE;
-  }
-  struct sockaddr_in server_addr;
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(atoi(port));
-  server_addr.sin_addr.s_addr = inet_addr(ip);
-  if (inet_pton(AF_INET, ip, &server_addr.sin_addr) != 1) {
-    perror("inet_pton");
-    return EXIT_FAILURE;
-  }
-  int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (socket_fd == -1) {
-    perror("socket");
-    return EXIT_FAILURE;
-  }
-  if (connect(socket_fd, (struct sockaddr *)&server_addr,
-              sizeof(server_addr)) == -1) {
-    perror("connect");
-    return EXIT_FAILURE;
-  }
-
-  if (attach_process(target_pid) == -1) {
-    return EXIT_FAILURE;
-  }
-
-  process_dump_t dump;
-  memset(&dump, 0, sizeof(dump));
-
-  // Read memory regions
-  if (read_memory_regions(target_pid, &dump.memory_dump) == -1) {
-    ret = -1;
-    goto ret;
-  }
-
-  // get user registers
-  if (ptrace(PTRACE_GETREGS, target_pid, NULL, &dump.user_dump.regs) == -1) {
-    perror("ptrace(PTRACE_GETREGS)");
-    ret = -1;
-    goto ret;
-  }
-
-  // Send the dump to the server
-  if (send_dump(&dump, socket_fd) == -1) {
-    ret = -1;
-    goto ret;
-  }
-
-  // kill the pid
-  if (kill(target_pid, SIGKILL) == -1) {
-    perror("kill");
-    ret = -1;
-    goto ret;
-  }
-
-ret:
-  free_process_dump(&dump);
-  return ret;
 }
 
 bool should_save_region(const memory_region_t *region) {
@@ -281,4 +214,85 @@ void free_process_dump(process_dump_t *dump) {
     free(dump->memory_dump.regions[i].content);
   }
   free(dump->memory_dump.regions);
+}
+
+int main(int argc, char *argv[]) {
+  int ret = 0;
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s <pid> <ip:port>\n", argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  // Check if the target process exists
+  pid_t target_pid = atoi(argv[1]);
+  if (kill(target_pid, 0) == -1 && errno != EPERM) {
+    perror("kill");
+    return EXIT_FAILURE;
+  }
+
+  // parse ip and port to socket address
+  char *send_socket = argv[2];
+  const char *ip = strtok(send_socket, ":");
+  const char *port = strtok(NULL, ":");
+  if (ip == NULL || port == NULL) {
+    fprintf(stderr, "Invalid ip:port\n");
+    return EXIT_FAILURE;
+  }
+  struct sockaddr_in server_addr;
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(atoi(port));
+  server_addr.sin_addr.s_addr = inet_addr(ip);
+  if (inet_pton(AF_INET, ip, &server_addr.sin_addr) != 1) {
+    perror("inet_pton");
+    return EXIT_FAILURE;
+  }
+  int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (socket_fd == -1) {
+    perror("socket");
+    return EXIT_FAILURE;
+  }
+  if (connect(socket_fd, (struct sockaddr *)&server_addr,
+              sizeof(server_addr)) == -1) {
+    perror("connect");
+    return EXIT_FAILURE;
+  }
+
+  if (attach_process(target_pid) == -1) {
+    return EXIT_FAILURE;
+  }
+  long long start_time = get_time_ms();
+  printf("migration start time: %lld ms\n", start_time);
+
+  process_dump_t dump;
+  memset(&dump, 0, sizeof(dump));
+
+  // Read memory regions
+  if (read_memory_regions(target_pid, &dump.memory_dump) == -1) {
+    ret = -1;
+    goto ret;
+  }
+
+  // get user registers
+  if (ptrace(PTRACE_GETREGS, target_pid, NULL, &dump.user_dump.regs) == -1) {
+    perror("ptrace(PTRACE_GETREGS)");
+    ret = -1;
+    goto ret;
+  }
+
+  // Send the dump to the server
+  if (send_dump(&dump, socket_fd) == -1) {
+    ret = -1;
+    goto ret;
+  }
+
+  // kill the pid
+  if (kill(target_pid, SIGKILL) == -1) {
+    perror("kill");
+    ret = -1;
+    goto ret;
+  }
+
+ret:
+  free_process_dump(&dump);
+  return ret;
 }
