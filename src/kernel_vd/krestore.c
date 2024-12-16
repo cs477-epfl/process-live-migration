@@ -99,8 +99,11 @@ static int unmap_all(void) {
     // only keep a special rw anonymous mapping (essential for continued
     // execution after return to user space and restore the registers)
     if (vma->vm_flags & VM_READ && vma->vm_flags & VM_WRITE &&
-        vma->vm_file == NULL && vma->vm_start > 0x7f0000000000) {
+        vma->vm_file == NULL && vma->vm_start > 0x7f0000000000 &&
+        vma->vm_end < 0x7fe000000000 &&
+        (vma->vm_end - vma->vm_start) >= 0xa000) {
       vma = next_vma;
+      printk(KERN_INFO "/dev/krestore: Skip special rw anonymous mapping\n");
       continue;
     }
 
