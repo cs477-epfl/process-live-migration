@@ -17,7 +17,7 @@ BUILDDIR = build
 SRCDIR = src
 WORKLOADDIR = src/workload
 
-WORKLOADS = $(BUILDDIR)/count_iter $(BUILDDIR)/count_recur
+WORKLOADS = $(BUILDDIR)/count_iter $(BUILDDIR)/count_recur $(BUILDDIR)/kv
 
 all: $(BUILDDIR)/checkpoint $(BUILDDIR)/restore $(WORKLOADS)
 
@@ -31,6 +31,12 @@ $(BUILDDIR)/count_recur: $(BUILDDIR)/count_recur.o
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
 
 $(BUILDDIR)/count_recur.o: $(WORKLOADDIR)/count_recur.c
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
+
+$(BUILDDIR)/kv: $(BUILDDIR)/kv.o
+	$(WORKLOADCC) $(WORKLOADCFLAGS) $^ -o $@
+
+$(BUILDDIR)/kv.o: $(WORKLOADDIR)/kv.c
 	$(WORKLOADCC) $(WORKLOADCFLAGS) $(CFLAGS) $^ -o $@
 
 $(BUILDDIR)/checkpoint: $(BUILDDIR)/checkpoint.o $(BUILDDIR)/ptrace.o
